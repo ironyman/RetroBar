@@ -26,23 +26,27 @@
     <SolidColorBrush x:Key="TrayToggleArrowPressed" Color="#aaaaaa" />
     <Thickness x:Key="TrayToggleArrowPadding" Left="4" Top="2" Right="5" Bottom="2" />
 
-    <SolidColorBrush x:Key="TaskButtonOuterBorder" Color="#2a2a2a" />
-    <SolidColorBrush x:Key="TaskButtonInnerHorizontalBorder" Color="#1a1a1a" />
-    <SolidColorBrush x:Key="TaskButtonInnerVerticalBorder" Color="#1a1a1a" />
-    <SolidColorBrush x:Key="TaskButtonBackground" Color="#0d0d0d" />
-    <SolidColorBrush x:Key="TaskButtonBottomBackground" Color="#00000000" />
+    <SolidColorBrush x:Key="TaskButtonOuterBorder" Color="Transparent" />
+    <SolidColorBrush x:Key="TaskButtonInnerHorizontalBorder" Color="Transparent" />
+    <SolidColorBrush x:Key="TaskButtonInnerVerticalBorder" Color="Transparent" />
+    <SolidColorBrush x:Key="TaskButtonBackground" Color="Transparent" />
+    <SolidColorBrush x:Key="TaskButtonBottomBackground" Color="Transparent" />
 
-    <SolidColorBrush x:Key="TaskButtonOuterBorderHover" Color="#3d3d3d" />
-    <SolidColorBrush x:Key="TaskButtonInnerHorizontalBorderHover" Color="#2a2a2a" />
-    <SolidColorBrush x:Key="TaskButtonInnerVerticalBorderHover" Color="#2a2a2a" />
+    <!-- Match active border so hovering an active button doesn't flicker the accent border away -->
+    <SolidColorBrush x:Key="TaskButtonOuterBorderHover"
+                     Color="{DynamicResource {x:Static SystemColors.HighlightColorKey}}" />
+    <SolidColorBrush x:Key="TaskButtonInnerHorizontalBorderHover" Color="Transparent" />
+    <SolidColorBrush x:Key="TaskButtonInnerVerticalBorderHover" Color="Transparent" />
     <SolidColorBrush x:Key="TaskButtonBackgroundHover" Color="#1a1a1a" />
-    <SolidColorBrush x:Key="TaskButtonBottomBackgroundHover" Color="#00000000" />
+    <SolidColorBrush x:Key="TaskButtonBottomBackgroundHover" Color="Transparent" />
 
-    <SolidColorBrush x:Key="TaskButtonOuterBorderActive" Color="#4d4d4d" />
-    <SolidColorBrush x:Key="TaskButtonInnerHorizontalBorderActive" Color="#333333" />
-    <SolidColorBrush x:Key="TaskButtonInnerVerticalBorderActive" Color="#333333" />
+    <!-- Active window: outer border uses system accent color; inner borders invisible -->
+    <SolidColorBrush x:Key="TaskButtonOuterBorderActive"
+                     Color="{DynamicResource {x:Static SystemColors.HighlightColorKey}}" />
+    <SolidColorBrush x:Key="TaskButtonInnerHorizontalBorderActive" Color="Transparent" />
+    <SolidColorBrush x:Key="TaskButtonInnerVerticalBorderActive" Color="Transparent" />
     <SolidColorBrush x:Key="TaskButtonBackgroundActive" Color="#262626" />
-    <SolidColorBrush x:Key="TaskButtonBottomBackgroundActive" Color="#0d0d0d" />
+    <SolidColorBrush x:Key="TaskButtonBottomBackgroundActive" Color="Transparent" />
 
     <SolidColorBrush x:Key="TaskButtonOuterBorderFlashing" Color="#664d1f" />
     <SolidColorBrush x:Key="TaskButtonInnerTopBorderFlashing" Color="#cc7700" />
