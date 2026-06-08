@@ -106,6 +106,13 @@
                 <ToolTip.Style>
                     <Style TargetType="ToolTip"
                            BasedOn="{StaticResource {x:Type ToolTip}}">
+                        <Setter Property="Placement">
+                            <Setter.Value>
+                                <MultiBinding Converter="{StaticResource toolTipPlacementConverter}" UpdateSourceTrigger="PropertyChanged">
+                                    <Binding Source="{x:Static utilities:Settings.Instance}" Path="Edge"/>
+                                </MultiBinding>
+                            </Setter.Value>
+                        </Setter>
                         <Style.Triggers>
                             <DataTrigger Binding="{Binding Source={x:Static utilities:Settings.Instance}, Path=ShowTaskThumbnails, UpdateSourceTrigger=PropertyChanged}"
                                                              Value="True">
@@ -126,13 +133,6 @@
                                                 <Binding RelativeSource="{RelativeSource Self}" Path="PlacementTarget.ActualHeight"/>
                                                 <Binding RelativeSource="{RelativeSource Self}" Path="ActualHeight"/>
                                                 <Binding Source="{x:Static utilities:Settings.Instance}" Path="TaskbarScale"/>
-                                                <Binding Source="{x:Static utilities:Settings.Instance}" Path="Edge"/>
-                                            </MultiBinding>
-                                        </Setter.Value>
-                                    </Setter>
-                                    <Setter Property="Placement">
-                                        <Setter.Value>
-                                            <MultiBinding Converter="{StaticResource toolTipPlacementConverter}" UpdateSourceTrigger="PropertyChanged">
                                                 <Binding Source="{x:Static utilities:Settings.Instance}" Path="Edge"/>
                                             </MultiBinding>
                                         </Setter.Value>
