@@ -12,10 +12,10 @@
     <SolidColorBrush x:Key="TaskbarBackgroundGlow" Color="#00000000" />
     <SolidColorBrush x:Key="TaskbarVerticalBackground" Color="#000000" />
     <SolidColorBrush x:Key="TaskbarVerticalBackgroundGlow" Color="#00000000" />
-    <SolidColorBrush x:Key="TaskbarTopBorder" Color="#1a1a1a" />
-    <SolidColorBrush x:Key="TaskbarTopInnerBorder1" Color="#0d0d0d" />
-    <SolidColorBrush x:Key="TaskbarTopInnerBorder2" Color="#00000000" />
-    <SolidColorBrush x:Key="TaskbarBottomBorder" Color="#1a1a1a" />
+    <SolidColorBrush x:Key="TaskbarTopBorder" Color="Transparent" />
+    <SolidColorBrush x:Key="TaskbarTopInnerBorder1" Color="Transparent" />
+    <SolidColorBrush x:Key="TaskbarTopInnerBorder2" Color="Transparent" />
+    <SolidColorBrush x:Key="TaskbarBottomBorder" Color="Transparent" />
 
     <SolidColorBrush x:Key="TrayToggleBorder" Color="#333333" />
     <SolidColorBrush x:Key="TrayToggleInnerBorder" Color="#1a1a1a" />
