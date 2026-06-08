@@ -185,7 +185,7 @@ namespace RetroBar.Utilities
             set => Set(ref _notifyIconBehaviors, value);
         }
 
-        private bool _allowFontSmoothing = false;
+        private bool _allowFontSmoothing = true;
         public bool AllowFontSmoothing
         {
             get => _allowFontSmoothing;

@@ -91,6 +91,11 @@
             </Style>
         </ResourceDictionary>
     </Window.Resources>
+    <TextOptions.TextRenderingMode>
+        <Binding Source="{x:Static Settings:Settings.Instance}"
+                 Path="AllowFontSmoothing"
+                 Converter="{StaticResource textRenderingModeConverter}" />
+    </TextOptions.TextRenderingMode>
     <Grid Margin="7">
         <Grid.RowDefinitions>
             <RowDefinition Height="*" />

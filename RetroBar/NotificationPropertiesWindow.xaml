@@ -12,6 +12,7 @@
         Closing="Window_Closing">
     <Window.Resources>
         <ResourceDictionary>
+            <converters:BoolToTextRenderingModeConverter x:Key="textRenderingModeConverter" />
             <converters:BoolToIntConverter x:Key="boolToIntConverter" />
             <converters:BoolToVisibilityConverter x:Key="boolToVisibilityConverter" />
             <converters:NewLineToSpaceConverter x:Key="newLineToSpaceConverter" />
@@ -51,6 +52,11 @@
             </Style>
         </ResourceDictionary>
     </Window.Resources>
+    <TextOptions.TextRenderingMode>
+        <Binding Source="{x:Static Settings:Settings.Instance}"
+                 Path="AllowFontSmoothing"
+                 Converter="{StaticResource textRenderingModeConverter}" />
+    </TextOptions.TextRenderingMode>
     <Grid Margin="9,12">
         <Grid.RowDefinitions>
             <RowDefinition Height="*" />
