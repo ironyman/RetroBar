@@ -62,9 +62,117 @@
                 Value="{DynamicResource GlobalFontSize}" />
     </Style>
 
+    <!-- Context menu colors; override these keys in per-theme files -->
+    <SolidColorBrush x:Key="ContextMenuBackground" Color="{x:Static SystemColors.MenuColor}" />
+    <SolidColorBrush x:Key="ContextMenuBorderBrush" Color="{x:Static SystemColors.ControlDarkColor}" />
+    <SolidColorBrush x:Key="ContextMenuForeground" Color="{x:Static SystemColors.MenuTextColor}" />
+    <SolidColorBrush x:Key="MenuItemHighlightBackground" Color="{x:Static SystemColors.HighlightColor}" />
+    <SolidColorBrush x:Key="MenuItemHighlightForeground" Color="{x:Static SystemColors.HighlightTextColor}" />
+    <SolidColorBrush x:Key="MenuItemDisabledForeground" Color="{x:Static SystemColors.GrayTextColor}" />
+    <SolidColorBrush x:Key="MenuSeparatorBrush" Color="{x:Static SystemColors.ControlDarkColor}" />
+
     <Style TargetType="ContextMenu"
            x:Key="{x:Type ContextMenu}"
            BasedOn="{StaticResource GlobalFonts}">
+        <Setter Property="OverridesDefaultStyle" Value="True" />
+        <Setter Property="Background" Value="{DynamicResource ContextMenuBackground}" />
+        <Setter Property="Foreground" Value="{DynamicResource ContextMenuForeground}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource ContextMenuBorderBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="MinWidth" Value="120" />
+        <Setter Property="Padding" Value="0,3,0,3" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ContextMenu">
+                    <Border Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            Padding="{TemplateBinding Padding}"
+                            SnapsToDevicePixels="True">
+                        <ItemsPresenter SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}" />
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="{x:Static MenuItem.SeparatorStyleKey}" TargetType="Separator">
+        <Setter Property="OverridesDefaultStyle" Value="True" />
+        <Setter Property="Background" Value="{DynamicResource MenuSeparatorBrush}" />
+        <Setter Property="Margin" Value="0,3,0,3" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Separator">
+                    <Rectangle Height="1"
+                               Fill="{TemplateBinding Background}"
+                               Margin="{TemplateBinding Margin}" />
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style TargetType="MenuItem"
+           x:Key="{x:Type MenuItem}"
+           BasedOn="{StaticResource GlobalFonts}">
+        <Setter Property="OverridesDefaultStyle" Value="True" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Foreground" Value="{DynamicResource ContextMenuForeground}" />
+        <Setter Property="Padding" Value="0,4,0,4" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="MenuItem">
+                    <Border x:Name="TemplateRoot"
+                            Background="{TemplateBinding Background}"
+                            Padding="{TemplateBinding Padding}"
+                            SnapsToDevicePixels="True">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" MinWidth="28" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="16" />
+                            </Grid.ColumnDefinitions>
+                            <ContentPresenter x:Name="Icon"
+                                              Grid.Column="0"
+                                              ContentSource="Icon"
+                                              HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"
+                                              Margin="6,0,4,0" />
+                            <ContentPresenter Grid.Column="1"
+                                              ContentSource="Header"
+                                              RecognizesAccessKey="True"
+                                              VerticalAlignment="Center"
+                                              Margin="0,0,24,0" />
+                            <TextBlock x:Name="IGText"
+                                       Grid.Column="2"
+                                       Text="{TemplateBinding InputGestureText}"
+                                       VerticalAlignment="Center"
+                                       Margin="8,0,0,0"
+                                       Foreground="{DynamicResource MenuItemDisabledForeground}" />
+                            <Path x:Name="Arrow"
+                                  Grid.Column="3"
+                                  Data="M 0 0 L 4 3.5 L 0 7 Z"
+                                  Fill="{TemplateBinding Foreground}"
+                                  HorizontalAlignment="Center"
+                                  VerticalAlignment="Center"
+                                  Visibility="Collapsed" />
+                        </Grid>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsHighlighted" Value="True">
+                            <Setter TargetName="TemplateRoot" Property="Background" Value="{DynamicResource MenuItemHighlightBackground}" />
+                            <Setter Property="Foreground" Value="{DynamicResource MenuItemHighlightForeground}" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Foreground" Value="{DynamicResource MenuItemDisabledForeground}" />
+                        </Trigger>
+                        <Trigger Property="Role" Value="SubmenuHeader">
+                            <Setter TargetName="Arrow" Property="Visibility" Value="Visible" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
     </Style>
 
     <Style TargetType="ToolTip"

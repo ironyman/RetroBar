@@ -5,7 +5,7 @@
     <system:Double x:Key="TaskbarHeight">30</system:Double>
     <system:Double x:Key="TaskbarRowHeight">30</system:Double>
     <system:Boolean x:Key="AllowsTransparency">False</system:Boolean>
-    <Thickness x:Key="TaskButtonMargin" Right="2" />
+    <Thickness x:Key="TaskButtonMargin" Left="1" Right="1" />
     <FontWeight x:Key="SetTimeMenuItemWeight">Normal</FontWeight>
 
     <SolidColorBrush x:Key="TaskbarBackground" Color="#000000" />
@@ -183,6 +183,14 @@
 
     <FontFamily x:Key="GlobalFontFamily">Segoe UI</FontFamily>
     <system:Double x:Key="GlobalFontSize">12</system:Double>
+
+    <SolidColorBrush x:Key="ContextMenuBackground" Color="#1f1f1f" />
+    <SolidColorBrush x:Key="ContextMenuBorderBrush" Color="#454545" />
+    <SolidColorBrush x:Key="ContextMenuForeground" Color="#f3f3f3" />
+    <SolidColorBrush x:Key="MenuItemHighlightBackground" Color="#3d3d3d" />
+    <SolidColorBrush x:Key="MenuItemHighlightForeground" Color="#ffffff" />
+    <SolidColorBrush x:Key="MenuItemDisabledForeground" Color="#606060" />
+    <SolidColorBrush x:Key="MenuSeparatorBrush" Color="#3a3a3a" />
 
     <Style TargetType="Window"
            x:Key="TaskbarWindow"
