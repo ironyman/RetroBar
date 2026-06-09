@@ -149,32 +149,55 @@ namespace RetroBar.Utilities
                 if (WlanEnumInterfaces(_wlanHandle, IntPtr.Zero, out IntPtr ifList) != 0) return;
                 try
                 {
-                    var header = Marshal.PtrToStructure<WLAN_INTERFACE_INFO_LIST_HEADER>(ifList);
-                    IntPtr itemPtr = ifList + 8;
+                    uint count = (uint)Marshal.ReadInt32(ifList, 0);
+                    int ifInfoSize = Marshal.SizeOf<WLAN_INTERFACE_INFO>();
+                    IntPtr itemPtr = IntPtr.Add(ifList, 8);
 
-                    for (int i = 0; i < header.dwNumberOfItems; i++)
+                    for (uint i = 0; i < count; i++)
                     {
                         var info = Marshal.PtrToStructure<WLAN_INTERFACE_INFO>(itemPtr);
                         if (info.isState == WLAN_INTERFACE_STATE.wlan_interface_state_connected)
                         {
-                            var opcode = WLAN_INTF_OPCODE.wlan_intf_opcode_current_connection;
-                            if (WlanQueryInterface(_wlanHandle, ref info.InterfaceGuid, opcode,
-                                IntPtr.Zero, out _, out IntPtr data, IntPtr.Zero) == 0)
+                            Guid guid = info.InterfaceGuid;
+
+                            // Use wlan_intf_opcode_rssi (0x10000102) — returns a single int (dBm).
+                            // This avoids relying on the complex nested WLAN_CONNECTION_ATTRIBUTES
+                            // struct where ByValArray padding can misalign wlanSignalQuality.
+                            if (WlanQueryInterface(_wlanHandle, ref guid,
+                                WLAN_INTF_OPCODE.wlan_intf_opcode_rssi,
+                                IntPtr.Zero, out _, out IntPtr rssiPtr, IntPtr.Zero) == 0)
                             {
                                 try
                                 {
-                                    var attrs = Marshal.PtrToStructure<WLAN_CONNECTION_ATTRIBUTES>(data);
-                                    quality = (int)attrs.wlanAssociationAttributes.wlanSignalQuality;
-                                    uint len = attrs.wlanAssociationAttributes.dot11Ssid.uSSIDLength;
-                                    if (len > 0 && len <= 32)
-                                        ssid = Encoding.UTF8.GetString(
-                                            attrs.wlanAssociationAttributes.dot11Ssid.ucSSID, 0, (int)len);
+                                    int rssi = Marshal.ReadInt32(rssiPtr);
+                                    // Linear map: -100 dBm → 0%, -50 dBm → 100%
+                                    quality = Math.Max(0, Math.Min(100, 2 * (rssi + 100)));
                                 }
-                                finally { WlanFreeMemory(data); }
+                                finally { WlanFreeMemory(rssiPtr); }
+                            }
+
+                            // Read SSID via direct byte offsets in WLAN_CONNECTION_ATTRIBUTES:
+                            //   offset 520 = dot11Ssid.uSSIDLength (uint)
+                            //   offset 524 = dot11Ssid.ucSSID (byte[32])
+                            if (WlanQueryInterface(_wlanHandle, ref guid,
+                                WLAN_INTF_OPCODE.wlan_intf_opcode_current_connection,
+                                IntPtr.Zero, out _, out IntPtr connPtr, IntPtr.Zero) == 0)
+                            {
+                                try
+                                {
+                                    int ssidLen = Marshal.ReadInt32(connPtr, 520);
+                                    if (ssidLen > 0 && ssidLen <= 32)
+                                    {
+                                        byte[] ssidBytes = new byte[ssidLen];
+                                        Marshal.Copy(IntPtr.Add(connPtr, 524), ssidBytes, 0, ssidLen);
+                                        ssid = Encoding.UTF8.GetString(ssidBytes);
+                                    }
+                                }
+                                finally { WlanFreeMemory(connPtr); }
                             }
                             break;
                         }
-                        itemPtr += Marshal.SizeOf<WLAN_INTERFACE_INFO>();
+                        itemPtr = IntPtr.Add(itemPtr, ifInfoSize);
                     }
                 }
                 finally { WlanFreeMemory(ifList); }
@@ -224,7 +247,11 @@ namespace RetroBar.Utilities
         [DllImport("wlanapi.dll", SetLastError = false)]
         private static extern void WlanFreeMemory(IntPtr pMemory);
 
-        private enum WLAN_INTF_OPCODE { wlan_intf_opcode_current_connection = 7 }
+        private enum WLAN_INTF_OPCODE
+        {
+            wlan_intf_opcode_current_connection = 7,
+            wlan_intf_opcode_rssi = 0x10000102,
+        }
 
         private enum WLAN_INTERFACE_STATE
         {
@@ -264,47 +291,5 @@ namespace RetroBar.Utilities
             public WLAN_INTERFACE_STATE isState;
         }
 
-        [StructLayout(LayoutKind.Sequential)]
-        private struct DOT11_SSID
-        {
-            public uint uSSIDLength;
-            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 32)]
-            public byte[] ucSSID;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct WLAN_ASSOCIATION_ATTRIBUTES
-        {
-            public DOT11_SSID dot11Ssid;          // 36 bytes (4 + 32)
-            public uint dot11BssType;              // 4
-            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 6)]
-            public byte[] dot11Bssid;              // 6
-            private ushort _reserved;              // 2
-            public uint dot11PhyType;              // 4
-            public uint uDot11PhyIndex;            // 4
-            public uint wlanSignalQuality;         // 4  (offset 56 from start of struct)
-            public uint ulRxRate;
-            public uint ulTxRate;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct WLAN_SECURITY_ATTRIBUTES
-        {
-            [MarshalAs(UnmanagedType.Bool)] public bool bSecurityEnabled;
-            [MarshalAs(UnmanagedType.Bool)] public bool bOneXEnabled;
-            public uint dot11AuthAlgorithm;
-            public uint dot11CipherAlgorithm;
-        }
-
-        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-        private struct WLAN_CONNECTION_ATTRIBUTES
-        {
-            public uint isState;
-            public uint wlanConnectionMode;
-            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 256)]
-            public string strProfileName;          // 512 bytes (256 WCHARs)
-            public WLAN_ASSOCIATION_ATTRIBUTES wlanAssociationAttributes;  // offset 520
-            public WLAN_SECURITY_ATTRIBUTES wlanSecurityAttributes;
-        }
     }
 }

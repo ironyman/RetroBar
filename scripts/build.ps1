@@ -29,7 +29,12 @@
     Build everything in a background window, then launch RetroBar when the build succeeds.
 
 .PARAMETER Stop
-    Kill RetroBar and restore the Windows Explorer taskbar to its normal visible state.
+    Kill RetroBar, restore the Windows Explorer taskbar to its normal visible state, and
+    disable taskbar auto-hide so Explorer re-appears immediately.
+
+.PARAMETER Relaunch
+    Stop RetroBar (same as -Stop), rebuild the specified targets, then start RetroBar again.
+    Combines -Stop + build + launch in one step.
 
 .PARAMETER Help
     Show this help message.
@@ -43,6 +48,8 @@
     .\build.ps1 -Background                    # build + launch RetroBar in background window
     .\build.ps1 -Target RetroBar -Background   # rebuild RetroBar then launch it
     .\build.ps1 -Stop                          # kill RetroBar + restore Explorer taskbar
+    .\build.ps1 -Relaunch                      # stop, rebuild all, start RetroBar
+    .\build.ps1 -Target RetroBar -Relaunch     # stop, rebuild RetroBar only, start
 #>
 param(
     [Parameter(Position = 0)]
@@ -61,6 +68,7 @@ param(
 
     [switch]$Background,
     [switch]$Stop,
+    [switch]$Relaunch,
     [switch]$Help,
 
     # Internal: passed by -Background to tell the spawned process to launch RetroBar after building.
@@ -130,6 +138,46 @@ function Start-RetroBar([string]$cfg, [string]$fw) {
     Write-Host "RetroBar launched: $exe" -ForegroundColor Green
 }
 
+function Disable-TaskbarAutoHide {
+    if (-not ('TaskbarAutoHide' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class TaskbarAutoHide {
+    const uint ABM_GETSTATE = 0x00000004;
+    const uint ABM_SETSTATE = 0x0000000A;
+    const int  ABS_AUTOHIDE = 0x00000001;
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct APPBARDATA {
+        public int    cbSize;
+        public IntPtr hWnd;
+        public uint   uCallbackMessage;
+        public uint   uEdge;
+        public int    rcLeft, rcTop, rcRight, rcBottom;
+        public IntPtr lParam;
+    }
+
+    [DllImport("shell32.dll")] static extern uint SHAppBarMessage(uint msg, ref APPBARDATA d);
+    [DllImport("user32.dll")]  static extern IntPtr FindWindow(string cls, string wnd);
+
+    public static void Disable() {
+        IntPtr tray = FindWindow("Shell_TrayWnd", null);
+        if (tray == IntPtr.Zero) return;
+        var d = new APPBARDATA();
+        d.cbSize = System.Runtime.InteropServices.Marshal.SizeOf(d);
+        d.hWnd   = tray;
+        uint state = SHAppBarMessage(ABM_GETSTATE, ref d);
+        d.lParam  = (IntPtr)((int)state & ~ABS_AUTOHIDE);
+        SHAppBarMessage(ABM_SETSTATE, ref d);
+    }
+}
+'@ -Language CSharp
+    }
+    [TaskbarAutoHide]::Disable()
+    Write-Host "Taskbar auto-hide disabled." -ForegroundColor Green
+}
+
 function Restore-WindowsTaskbar {
     if (-not ('TaskbarRestore' -as [type])) {
         Add-Type -TypeDefinition @'
@@ -178,7 +226,20 @@ if ($Help) {
 
 if ($Stop) {
     Stop-RetroBar
+    Disable-TaskbarAutoHide
     Restore-WindowsTaskbar
+    exit 0
+}
+
+if ($Relaunch) {
+    Stop-RetroBar
+    Disable-TaskbarAutoHide
+    Restore-WindowsTaskbar
+    $script:BuildOk = $true
+    Invoke-Build -targets $Target -cfg $Configuration -fw $Framework -verbosity $Verbosity
+    if ($script:BuildOk) {
+        Start-RetroBar -cfg $Configuration -fw $Framework
+    }
     exit 0
 }
 

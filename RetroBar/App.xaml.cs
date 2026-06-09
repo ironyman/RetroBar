@@ -116,7 +116,22 @@ namespace RetroBar
             _logger = new ManagedShellLogger();
 
             ShellConfig config = ShellManager.DefaultShellConfig;
-            config.PinnedNotifyIcons = Settings.Instance.NotifyIconBehaviors.Where(setting => setting.Behavior == NotifyIconBehavior.AlwaysShow).Select(setting => setting.Identifier).ToArray();
+            var pinnedList = Settings.Instance.NotifyIconBehaviors
+                .Where(setting => setting.Behavior == NotifyIconBehavior.AlwaysShow)
+                .Select(setting => setting.Identifier)
+                .ToList();
+
+            // Always keep our custom network icon immediately before the volume icon
+            var netIdx = pinnedList.IndexOf(NetworkTrayIcon.GUID_STRING);
+            var volIdx = pinnedList.IndexOf(ManagedShell.WindowsTray.NotificationArea.VOLUME_GUID);
+            if (netIdx >= 0 && volIdx >= 0 && netIdx != volIdx - 1)
+            {
+                pinnedList.RemoveAt(netIdx);
+                volIdx = pinnedList.IndexOf(ManagedShell.WindowsTray.NotificationArea.VOLUME_GUID);
+                pinnedList.Insert(volIdx, NetworkTrayIcon.GUID_STRING);
+            }
+
+            config.PinnedNotifyIcons = pinnedList.ToArray();
 
             return new ShellManager(config);
         }
