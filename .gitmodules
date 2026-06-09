@@ -1,0 +1,3 @@
+[submodule "ManagedShell"]
+	path = ManagedShell
+	url = https://github.com/cairoshell/ManagedShell.git
