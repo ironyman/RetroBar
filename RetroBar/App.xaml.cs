@@ -23,7 +23,6 @@ namespace RetroBar
         private bool _errorVisible;
         private ManagedShellLogger _logger;
         private WindowManager _windowManager;
-        private NetworkTrayIcon _networkTrayIcon;
 
         private readonly DictionaryManager _dictionaryManager;
         private readonly ExplorerMonitor _explorerMonitor;
@@ -61,7 +60,6 @@ namespace RetroBar
             _dictionaryManager.SetLanguageFromSettings();
             loadTheme();
             _windowManager = new WindowManager(_dictionaryManager, _explorerMonitor, _shellManager, _startMenuMonitor, _updater, _hotkeyManager);
-            _networkTrayIcon = new NetworkTrayIcon();
         }
 
         private void App_OnExit(object sender, ExitEventArgs e)
@@ -141,7 +139,6 @@ namespace RetroBar
         {
             Settings.Instance.PropertyChanged -= Settings_PropertyChanged;
 
-            _networkTrayIcon?.Dispose();
             _explorerMonitor.Dispose();
             _windowManager.Dispose();
             _dictionaryManager.Dispose();
