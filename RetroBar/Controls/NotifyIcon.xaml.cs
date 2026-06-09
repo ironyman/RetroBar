@@ -18,6 +18,7 @@ namespace RetroBar.Controls
     {
         private bool isLoaded;
         private ManagedShell.WindowsTray.NotifyIcon TrayIcon;
+        private bool _pendingLeftMouseDown;
 
         public static DependencyProperty HostProperty = DependencyProperty.Register(nameof(Host), typeof(Taskbar), typeof(NotifyIcon));
 
@@ -119,13 +120,34 @@ namespace RetroBar.Controls
         {
             e.Handled = true;
             Host?.SetTrayHost();
-            TrayIcon?.IconMouseDown(e.ChangedButton, MouseHelper.GetCursorPositionParam(), System.Windows.Forms.SystemInformation.DoubleClickTime);
+            if (e.ChangedButton == MouseButton.Left)
+            {
+                // Defer left mouse-down until mouse-up so it isn't sent spuriously at drag start
+                _pendingLeftMouseDown = true;
+            }
+            else
+            {
+                TrayIcon?.IconMouseDown(e.ChangedButton, MouseHelper.GetCursorPositionParam(), System.Windows.Forms.SystemInformation.DoubleClickTime);
+            }
         }
 
         private void NotifyIcon_OnMouseUp(object sender, MouseButtonEventArgs e)
         {
             e.Handled = true;
-            TrayIcon?.IconMouseUp(e.ChangedButton, MouseHelper.GetCursorPositionParam(), System.Windows.Forms.SystemInformation.DoubleClickTime);
+            if (e.ChangedButton == MouseButton.Left && _pendingLeftMouseDown)
+            {
+                _pendingLeftMouseDown = false;
+                if (!NotifyIconDropHandler.IsDragging)
+                {
+                    TrayIcon?.IconMouseDown(MouseButton.Left, MouseHelper.GetCursorPositionParam(), System.Windows.Forms.SystemInformation.DoubleClickTime);
+                    TrayIcon?.IconMouseUp(MouseButton.Left, MouseHelper.GetCursorPositionParam(), System.Windows.Forms.SystemInformation.DoubleClickTime);
+                    return;
+                }
+            }
+            if (!NotifyIconDropHandler.IsDragging)
+            {
+                TrayIcon?.IconMouseUp(e.ChangedButton, MouseHelper.GetCursorPositionParam(), System.Windows.Forms.SystemInformation.DoubleClickTime);
+            }
         }
 
         private void NotifyIcon_OnMouseEnter(object sender, MouseEventArgs e)

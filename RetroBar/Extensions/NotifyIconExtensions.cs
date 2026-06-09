@@ -6,6 +6,19 @@ namespace RetroBar.Extensions
 {
     public static class NotifyIconExtensions
     {
+        internal static readonly HashSet<string> SystemIconGuids = new HashSet<string>(System.StringComparer.OrdinalIgnoreCase)
+        {
+            NotificationArea.HEALTH_GUID,
+            NotificationArea.POWER_GUID,
+            NotificationArea.VOLUME_GUID,
+            NetworkTrayIcon.GUID_STRING
+        };
+
+        public static bool IsSystemIcon(this NotifyIcon icon)
+        {
+            return SystemIconGuids.Contains(icon.GUID.ToString());
+        }
+
         public static string GetInvertIdentifier(this NotifyIcon icon)
         {
             if (icon.GUID != default) return icon.GUID.ToString();
