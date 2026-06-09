@@ -22,6 +22,9 @@
 .PARAMETER Framework
     Target framework. Defaults to net6.0-windows10.0.19041.0.
 
+.PARAMETER Verbosity
+    MSBuild verbosity level passed to dotnet build: quiet, minimal (default), normal, detailed, or diagnostic.
+
 .PARAMETER Background
     Build everything in a background window, then launch RetroBar when the build succeeds.
 
@@ -35,6 +38,8 @@
     .\build.ps1                                # build everything (foreground, no launch)
     .\build.ps1 -Target WindowsTasks           # rebuild just WindowsTasks
     .\build.ps1 -Configuration Release         # release build of everything
+    .\build.ps1 -Verbosity normal              # show full build output
+    .\build.ps1 -Verbosity diagnostic          # show maximum build detail
     .\build.ps1 -Background                    # build + launch RetroBar in background window
     .\build.ps1 -Target RetroBar -Background   # rebuild RetroBar then launch it
     .\build.ps1 -Stop                          # kill RetroBar + restore Explorer taskbar
@@ -50,6 +55,9 @@ param(
     [string]$Configuration = 'Debug',
 
     [string]$Framework = 'net6.0-windows10.0.19041.0',
+
+    [ValidateSet('quiet', 'minimal', 'normal', 'detailed', 'diagnostic')]
+    [string]$Verbosity = 'minimal',
 
     [switch]$Background,
     [switch]$Stop,
@@ -87,7 +95,7 @@ function Get-ProjectPath([string]$name) {
     Join-Path $Root $map[$name]
 }
 
-function Invoke-Build([string[]]$targets, [string]$cfg, [string]$fw) {
+function Invoke-Build([string[]]$targets, [string]$cfg, [string]$fw, [string]$verbosity) {
     $projects = if ($targets -contains 'All') {
         $AllTargets | ForEach-Object { Get-ProjectPath $_ }
     } else {
@@ -96,8 +104,8 @@ function Invoke-Build([string[]]$targets, [string]$cfg, [string]$fw) {
 
     $failed = [System.Collections.Generic.List[string]]::new()
     foreach ($proj in $projects) {
-        Write-Host "`n==> dotnet build $(Split-Path $proj -Leaf) -c $cfg -f $fw" -ForegroundColor Cyan
-        dotnet build $proj -c $cfg -f $fw --no-incremental
+        Write-Host "`n==> dotnet build $(Split-Path $proj -Leaf) -c $cfg -f $fw -v $verbosity" -ForegroundColor Cyan
+        dotnet build $proj -c $cfg -f $fw --no-incremental -v $verbosity
         if ($LASTEXITCODE -ne 0) {
             $failed.Add($proj)
             Write-Warning "Build failed: $proj"
@@ -106,10 +114,10 @@ function Invoke-Build([string[]]$targets, [string]$cfg, [string]$fw) {
 
     if ($failed.Count -gt 0) {
         Write-Error "Failed projects:`n  $($failed -join "`n  ")"
-        return $false
+        $script:BuildOk = $false
+        return
     }
     Write-Host "`nAll targets built successfully." -ForegroundColor Green
-    return $true
 }
 
 function Start-RetroBar([string]$cfg, [string]$fw) {
@@ -182,6 +190,7 @@ if ($Background) {
         '-Target', $targetsArg
         '-Configuration', $Configuration
         '-Framework', $Framework
+        '-Verbosity', $Verbosity
         '-Launch'
     )
     Start-Process powershell -ArgumentList $scriptArgs -WindowStyle Normal
@@ -190,7 +199,8 @@ if ($Background) {
 }
 
 # Foreground build (with optional -Launch)
-$ok = Invoke-Build -targets $Target -cfg $Configuration -fw $Framework
-if ($Launch -and $ok) {
+$script:BuildOk = $true
+Invoke-Build -targets $Target -cfg $Configuration -fw $Framework -verbosity $Verbosity
+if ($Launch -and $script:BuildOk) {
     Start-RetroBar -cfg $Configuration -fw $Framework
 }
