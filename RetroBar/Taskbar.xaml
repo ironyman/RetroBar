@@ -53,7 +53,7 @@
                             CenterX="0"
                             CenterY="0" />
         </ContentControl.LayoutTransform>
-        <DockPanel>
+        <DockPanel UseLayoutRounding="True">
             <Button Visibility="Collapsed" x:Name="FocusDummyButton" />
             <controls:StartButton x:Name="StartButton"
                                   Host="{Binding RelativeSource={RelativeSource Mode=FindAncestor, AncestorType=Window}}">
@@ -127,6 +127,7 @@
                 </DockPanel.Dock>
             </controls:InputLanguage>
             <controls:TaskList VerticalAlignment="Stretch"
+                               Margin="-1,0,0,0"
                                Host="{Binding RelativeSource={RelativeSource Mode=FindAncestor, AncestorType=Window}}"
                                Tasks="{Binding Tasks}"></controls:TaskList>
         </DockPanel>
