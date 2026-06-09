@@ -48,6 +48,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Resource Include="Icons\Network\*.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
 	<Resource Include="Resources\desktop95-sm.png" />
 	<Resource Include="Resources\desktop95-lg.png" />
     <Resource Include="Resources\shader_invert.ps" />
