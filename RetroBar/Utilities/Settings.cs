@@ -143,7 +143,7 @@ namespace RetroBar.Utilities
         }
 
         private bool _collapseNotifyIcons = false;
-        public bool CollapseNotifyIcons
+                           public bool CollapseNotifyIcons
         {
             get => _collapseNotifyIcons;
             set => Set(ref _collapseNotifyIcons, value);
@@ -170,8 +170,13 @@ namespace RetroBar.Utilities
             },
             new NotifyIconBehaviorSetting
             {
-                Identifier = NotificationArea.NETWORK_GUID,
+                Identifier = NetworkTrayIcon.GUID_STRING,
                 Behavior = NotifyIconBehavior.AlwaysShow
+            },
+            new NotifyIconBehaviorSetting
+            {
+                Identifier = NotificationArea.NETWORK_GUID,
+                Behavior = NotifyIconBehavior.HideWhenInactive
             },
             new NotifyIconBehaviorSetting
             {
