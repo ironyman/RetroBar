@@ -72,15 +72,48 @@ namespace RetroBar.Utilities
                     // permission would have expired, but AllowSetForegroundWindow pre-authorizes it.
                     AllowSetForegroundWindow(0xFFFFFFFF);
                     SendMessage(tray, (int)WM.COMMAND, (IntPtr)TOGGLE_DESKTOP, IntPtr.Zero);
-                    // TOGGLE_DESKTOP posts window-restoration work internally; SendMessage returns
-                    // before windows finish unminimizing. Delay briefly so the target window is
-                    // fully restored before we try to activate it.
+                    // Three-tier focus-restore strategy:
+                    //
+                    // Tier 1 — AllowSetForegroundWindow + timer (called above, before SendMessage):
+                    //   Pre-grants foreground-activation rights to all processes while we still hold
+                    //   the WM_HOTKEY permission token. We then delay ~150 ms so that Explorer's
+                    //   TOGGLE_DESKTOP window-restoration (which is posted internally and completes
+                    //   after SendMessage returns) has time to finish before we try to activate.
+                    //
+                    // Tier 2 — SwitchToThisWindow:
+                    //   More forceful than SetForegroundWindow; bypasses some of the foreground-lock
+                    //   rules. Used as a fallback if SetForegroundWindow returns false.
+                    //
+                    // Tier 3 — AttachThreadInput:
+                    //   Temporarily joins our dispatcher thread's input queue to the target window's
+                    //   thread so that our SetForegroundWindow call is treated as coming from a thread
+                    //   that already owns the foreground, which the OS unconditionally allows.
                     var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
                     timer.Tick += (_, _) =>
                     {
                         timer.Stop();
                         ShowWindow(hwndToRestore, WindowShowStyle.Restore);
-                        SetForegroundWindow(hwndToRestore);
+
+                        // Tier 1: standard activation, works when AllowSetForegroundWindow succeeded.
+                        if (SetForegroundWindow(hwndToRestore))
+                            return;
+
+                        // Tier 2: SwitchToThisWindow is more aggressive and ignores some foreground
+                        // lock rules; it also raises a minimized window as a side effect.
+                        SwitchToThisWindow(hwndToRestore, true);
+                        if (GetForegroundWindow() == hwndToRestore)
+                            return;
+
+                        // Tier 3: attach our input queue to the target's thread so the OS treats
+                        // the subsequent SetForegroundWindow as coming from the foreground thread.
+                        uint targetTid = GetWindowThreadProcessId(hwndToRestore, out _);
+                        uint ourTid = GetCurrentThreadId();
+                        if (targetTid != 0 && targetTid != ourTid)
+                        {
+                            AttachThreadInput(ourTid, targetTid, true);
+                            SetForegroundWindow(hwndToRestore);
+                            AttachThreadInput(ourTid, targetTid, false);
+                        }
                     };
                     timer.Start();
                 }
