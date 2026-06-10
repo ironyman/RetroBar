@@ -3,13 +3,19 @@ using ManagedShell.Common.Logging;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
+using System.Windows.Threading;
 using static ManagedShell.Interop.NativeMethods;
 
 namespace RetroBar.Utilities
 {
     public class HotkeyManager : IDisposable
     {
+        [DllImport("user32.dll")] private static extern bool SwitchToThisWindow(IntPtr hWnd, bool fAltTab);
+        [DllImport("user32.dll")] private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+        [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
+
         private readonly HotkeyListenerWindow _listenerWindow;
         private readonly LowLevelKeyboardHook _keyboardHook;
         private const int TOGGLE_DESKTOP = 407;
@@ -57,16 +63,30 @@ namespace RetroBar.Utilities
             else
             {
                 _desktopShowing = false;
-                SendMessage(tray, (int)WM.COMMAND, (IntPtr)TOGGLE_DESKTOP, IntPtr.Zero);
                 if (_savedForeground != IntPtr.Zero)
                 {
                     IntPtr hwndToRestore = _savedForeground;
                     _savedForeground = IntPtr.Zero;
-                    // Called synchronously here, while still inside the WM_HOTKEY / keyboard-hook
-                    // handler — the thread still holds foreground-activation permission at this point.
-                    // A timer approach loses that permission before it fires.
-                    ShowWindow(hwndToRestore, WindowShowStyle.Restore);
-                    SetForegroundWindow(hwndToRestore);
+                    // Grant foreground activation rights to all processes now, while we still hold
+                    // the WM_HOTKEY foreground-activation permission. The timer fires after the
+                    // permission would have expired, but AllowSetForegroundWindow pre-authorizes it.
+                    AllowSetForegroundWindow(0xFFFFFFFF);
+                    SendMessage(tray, (int)WM.COMMAND, (IntPtr)TOGGLE_DESKTOP, IntPtr.Zero);
+                    // TOGGLE_DESKTOP posts window-restoration work internally; SendMessage returns
+                    // before windows finish unminimizing. Delay briefly so the target window is
+                    // fully restored before we try to activate it.
+                    var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
+                    timer.Tick += (_, _) =>
+                    {
+                        timer.Stop();
+                        ShowWindow(hwndToRestore, WindowShowStyle.Restore);
+                        SetForegroundWindow(hwndToRestore);
+                    };
+                    timer.Start();
+                }
+                else
+                {
+                    SendMessage(tray, (int)WM.COMMAND, (IntPtr)TOGGLE_DESKTOP, IntPtr.Zero);
                 }
             }
         }
