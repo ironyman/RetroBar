@@ -48,8 +48,8 @@
     .\build.ps1 -Background                    # build + launch RetroBar in background window
     .\build.ps1 -Target RetroBar -Background   # rebuild RetroBar then launch it
     .\build.ps1 -Stop                          # kill RetroBar + restore Explorer taskbar
-    .\build.ps1 -Relaunch                      # stop, rebuild all, start RetroBar
-    .\build.ps1 -Target RetroBar -Relaunch     # stop, rebuild RetroBar only, start
+    .\build.ps1 -Relaunch                      # stop, rebuild RetroBar only, start RetroBar
+    .\build.ps1 -Target All -Relaunch          # stop, rebuild all, start RetroBar
     .\build.ps1 -Relaunch -NoRebuild           # stop and start RetroBar without rebuilding
 #>
 param(
@@ -239,7 +239,8 @@ if ($Relaunch) {
     Restore-WindowsTaskbar
     $script:BuildOk = $true
     if (-not $NoRebuild) {
-        Invoke-Build -targets $Target -cfg $Configuration -fw $Framework -verbosity $Verbosity
+        $relaunchTarget = if ($Target -contains 'All') { @('RetroBar') } else { $Target }
+        Invoke-Build -targets $relaunchTarget -cfg $Configuration -fw $Framework -verbosity $Verbosity
     }
     if ($script:BuildOk) {
         Start-RetroBar -cfg $Configuration -fw $Framework
