@@ -50,6 +50,7 @@
     .\build.ps1 -Stop                          # kill RetroBar + restore Explorer taskbar
     .\build.ps1 -Relaunch                      # stop, rebuild all, start RetroBar
     .\build.ps1 -Target RetroBar -Relaunch     # stop, rebuild RetroBar only, start
+    .\build.ps1 -Relaunch -NoRebuild           # stop and start RetroBar without rebuilding
 #>
 param(
     [Parameter(Position = 0)]
@@ -69,6 +70,7 @@ param(
     [switch]$Background,
     [switch]$Stop,
     [switch]$Relaunch,
+    [switch]$NoRebuild,
     [switch]$Help,
 
     # Internal: passed by -Background to tell the spawned process to launch RetroBar after building.
@@ -236,7 +238,9 @@ if ($Relaunch) {
     Disable-TaskbarAutoHide
     Restore-WindowsTaskbar
     $script:BuildOk = $true
-    Invoke-Build -targets $Target -cfg $Configuration -fw $Framework -verbosity $Verbosity
+    if (-not $NoRebuild) {
+        Invoke-Build -targets $Target -cfg $Configuration -fw $Framework -verbosity $Verbosity
+    }
     if ($script:BuildOk) {
         Start-RetroBar -cfg $Configuration -fw $Framework
     }
@@ -261,7 +265,9 @@ if ($Background) {
 
 # Foreground build (with optional -Launch)
 $script:BuildOk = $true
-Invoke-Build -targets $Target -cfg $Configuration -fw $Framework -verbosity $Verbosity
+if (-not $NoRebuild) {
+    Invoke-Build -targets $Target -cfg $Configuration -fw $Framework -verbosity $Verbosity
+}
 if ($Launch -and $script:BuildOk) {
     Start-RetroBar -cfg $Configuration -fw $Framework
 }
