@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
@@ -194,6 +194,17 @@ namespace RetroBar.Controls
         {
             HandleNotificationIconMouseWheel(e.Delta > 0);
             e.Handled = true;
+        }
+
+        private void NotifyIcon_OnKeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key == Key.Enter)
+            {
+                e.Handled = true;
+                Host?.SetTrayHost();
+                TrayIcon?.IconMouseDown(MouseButton.Left, MouseHelper.GetCursorPositionParam(), System.Windows.Forms.SystemInformation.DoubleClickTime);
+                TrayIcon?.IconMouseUp(MouseButton.Left, MouseHelper.GetCursorPositionParam(), System.Windows.Forms.SystemInformation.DoubleClickTime);
+            }
         }
     }
 }

@@ -1,4 +1,4 @@
-﻿<UserControl x:Class="RetroBar.Controls.NotifyIcon"
+<UserControl x:Class="RetroBar.Controls.NotifyIcon"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:local="clr-namespace:RetroBar.Controls"
@@ -9,14 +9,38 @@
     <UserControl.Resources>
         <converters:ToolTipPlacementConverter x:Key="toolTipPlacementConverter" />
     </UserControl.Resources>
-    <StackPanel>
+    <Grid VerticalAlignment="Stretch">
         <Border x:Name="NotifyIconBorder"
+                Focusable="True"
+                VerticalAlignment="Stretch"
+                FocusVisualStyle="{DynamicResource TrayFocusVisualStyle}"
+                KeyDown="NotifyIcon_OnKeyDown"
                 MouseUp="NotifyIcon_OnMouseUp"
                 MouseDown="NotifyIcon_OnMouseDown"
                 MouseEnter="NotifyIcon_OnMouseEnter"
                 MouseLeave="NotifyIcon_OnMouseLeave"
                 MouseMove="NotifyIcon_OnMouseMove"
                 PreviewMouseWheel="NotifyIcon_OnPreviewMouseWheel">
+            <Border.Style>
+                <Style TargetType="Border">
+                    <Setter Property="Background" Value="Transparent"/>
+                    <Style.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter Property="Background" Value="{DynamicResource TrayToggleHoverBackground}"/>
+                        </Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter Property="Background" Value="{DynamicResource TrayToggleHoverBackground}"/>
+                        </Trigger>
+                        <!-- Suppress tooltip when title is null or empty -->
+                        <DataTrigger Binding="{Binding Path=Title}" Value="{x:Null}">
+                            <Setter Property="ToolTipService.IsEnabled" Value="False"/>
+                        </DataTrigger>
+                        <DataTrigger Binding="{Binding Path=Title}" Value="">
+                            <Setter Property="ToolTipService.IsEnabled" Value="False"/>
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </Border.Style>
             <Border.ToolTip>
                 <ToolTip Content="{Binding Path=Title}">
                     <ToolTip.Placement>
@@ -27,10 +51,11 @@
                 </ToolTip>
             </Border.ToolTip>
             <Image Source="{Binding Path=Icon, Mode=OneWay}"
-                   Focusable="True"
+                   Focusable="False"
                    Name="NotifyIconImage"
+                   VerticalAlignment="Center"
                    Style="{DynamicResource NotifyIcon}" />
         </Border>
         <local:NotifyBalloon x:Name="BalloonControl" />
-    </StackPanel>
+    </Grid>
 </UserControl>

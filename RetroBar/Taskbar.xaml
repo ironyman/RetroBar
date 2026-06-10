@@ -112,7 +112,8 @@
                                  Path="Orientation"
                                  RelativeSource="{RelativeSource Mode=FindAncestor, AncestorType=Window}" />
                     </StackPanel.Orientation>
-                    <controls:NotifyIconList NotificationArea="{Binding NotificationArea}" />
+                    <controls:NotifyIconList NotificationArea="{Binding NotificationArea}"
+                                            Host="{Binding RelativeSource={RelativeSource Mode=FindAncestor, AncestorType=Window}}" />
                     <controls:SystemNotifyIconList NotificationArea="{Binding NotificationArea}" />
                     <controls:Clock VerticalAlignment="Center" />
                 </StackPanel>

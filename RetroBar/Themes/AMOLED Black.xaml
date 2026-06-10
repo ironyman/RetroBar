@@ -17,6 +17,22 @@
     <SolidColorBrush x:Key="TaskbarTopInnerBorder2" Color="Transparent" />
     <SolidColorBrush x:Key="TaskbarBottomBorder" Color="Transparent" />
 
+    <SolidColorBrush x:Key="TrayIconFocusBorderBrush" Color="White" />
+
+    <!-- Solid border shown only for keyboard-nav focus (Win+B, Tab) — not mouse clicks -->
+    <Style x:Key="TrayFocusVisualStyle">
+        <Setter Property="Control.Template">
+            <Setter.Value>
+                <ControlTemplate>
+                    <Border BorderBrush="{DynamicResource TrayIconFocusBorderBrush}"
+                            BorderThickness="1"
+                            Background="Transparent"
+                            SnapsToDevicePixels="True"/>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <SolidColorBrush x:Key="TrayToggleBorder" Color="#333333" />
     <SolidColorBrush x:Key="TrayToggleInnerBorder" Color="#1a1a1a" />
     <SolidColorBrush x:Key="TrayToggleBackground" Color="#0d0d0d" />
@@ -969,10 +985,13 @@
     <ControlTemplate TargetType="{x:Type UserControl}"
                      x:Key="ClockTemplateKey">
         <StackPanel Orientation="Vertical">
-            <TextBlock Text="{Binding Path=Now, StringFormat=t, Mode=OneWay}"
-                       Style="{DynamicResource Clock}"
-                       Name="ClockText">
-            </TextBlock>
+            <Grid>
+                <TextBlock Text="12:59:59 PM" Style="{DynamicResource Clock}" Visibility="Hidden" />
+                <TextBlock Text="{Binding Path=Now, StringFormat=t, Mode=OneWay}"
+                           Style="{DynamicResource Clock}"
+                           Name="ClockText">
+                </TextBlock>
+            </Grid>
             <TextBlock Text="{Binding Path=Now, StringFormat=dddd, Mode=OneWay}"
                        Style="{DynamicResource Clock}"
                        Name="ClockVerticalDayOfWeek"
@@ -1343,6 +1362,8 @@
                 Value="0,0,3,0" />
         <Setter Property="VerticalAlignment"
                 Value="Stretch" />
+        <Setter Property="FocusVisualStyle"
+                Value="{DynamicResource TrayFocusVisualStyle}" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="ToggleButton">
@@ -1382,6 +1403,12 @@
                                     <ScaleTransform ScaleX="-1"></ScaleTransform>
                                 </Setter.Value>
                             </Setter>
+                        </Trigger>
+                        <Trigger Property="IsKeyboardFocused"
+                                 Value="True">
+                            <Setter TargetName="ButtonBorder"
+                                    Property="Background"
+                                    Value="{DynamicResource TrayToggleHoverBackground}" />
                         </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>

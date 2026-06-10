@@ -2,10 +2,12 @@ using System;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Threading;
+using ManagedShell.Interop;
 using ManagedShell.WindowsTray;
 using RetroBar.Extensions;
 using RetroBar.Utilities;
@@ -19,6 +21,85 @@ namespace RetroBar.Controls
         private ListCollectionView _allUserIcons;
         private ListCollectionView _pinnedUserIcons;
         private ObservableCollection<ManagedShell.WindowsTray.NotifyIcon> promotedIcons = [];
+
+        public static DependencyProperty HostProperty = DependencyProperty.Register(
+            nameof(Host), typeof(Taskbar), typeof(NotifyIconList),
+            new PropertyMetadata(HostChangedCallback));
+
+        public Taskbar Host
+        {
+            get { return (Taskbar)GetValue(HostProperty); }
+            set { SetValue(HostProperty, value); }
+        }
+
+        private static void HostChangedCallback(DependencyObject d, DependencyPropertyChangedEventArgs e)
+        {
+            var list = (NotifyIconList)d;
+            if (e.OldValue is Taskbar oldHost && oldHost.hotkeyManager != null)
+                oldHost.hotkeyManager.FocusTrayHotkeyPressed -= list.OnFocusTrayHotkeyPressed;
+            if (e.NewValue is Taskbar newHost && newHost.hotkeyManager != null)
+                newHost.hotkeyManager.FocusTrayHotkeyPressed += list.OnFocusTrayHotkeyPressed;
+        }
+
+        [DllImport("user32.dll")] private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+        [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
+
+        // Foreground window saved when Win+B last focused the tray — used to toggle back.
+        private IntPtr _winBSavedForeground = IntPtr.Zero;
+
+        // AttachThreadInput technique: temporarily joins our thread's input to the foreground
+        // window's thread, granting SetForegroundWindow permission without relying on WM_HOTKEY's
+        // fleeting activation permission (which is gone by the keyboard-hook path).
+        private void ForceForeground(IntPtr hwnd)
+        {
+            IntPtr fg = NativeMethods.GetForegroundWindow();
+            if (fg == hwnd) return;
+            uint fgTid = NativeMethods.GetWindowThreadProcessId(fg, out _);
+            uint myTid = GetCurrentThreadId();
+            bool attached = fgTid != 0 && fgTid != myTid && AttachThreadInput(fgTid, myTid, true);
+            NativeMethods.SetForegroundWindow(hwnd);
+            if (attached) AttachThreadInput(fgTid, myTid, false);
+        }
+
+        private void OnFocusTrayHotkeyPressed(object sender, EventArgs e)
+        {
+            var window = Window.GetWindow(this);
+            if (window == null) return;
+
+            var taskbarHwnd = new System.Windows.Interop.WindowInteropHelper(window).Handle;
+            if (taskbarHwnd == IntPtr.Zero) return;
+
+            var currentFg = NativeMethods.GetForegroundWindow();
+
+            if (currentFg == taskbarHwnd && _winBSavedForeground != IntPtr.Zero)
+            {
+                // Taskbar already has focus — toggle back to the saved prior window.
+                var hwndToRestore = _winBSavedForeground;
+                _winBSavedForeground = IntPtr.Zero;
+                ForceForeground(hwndToRestore);
+                return;
+            }
+
+            _winBSavedForeground = currentFg;
+            ForceForeground(taskbarHwnd);
+
+            // WPF focus calls must be posted so they run after Win32 focus has settled.
+            Dispatcher.BeginInvoke(DispatcherPriority.Input, () =>
+            {
+                if (NotifyIconToggleButton.Visibility == Visibility.Visible)
+                {
+                    NotifyIconToggleButton.Focus();
+                    return;
+                }
+
+                var icons = FindName("NotifyIcons") as ItemsControl;
+                if (icons?.Items.Count > 0)
+                {
+                    var container = icons.ItemContainerGenerator.ContainerFromIndex(0) as FrameworkElement;
+                    container?.MoveFocus(new System.Windows.Input.TraversalRequest(System.Windows.Input.FocusNavigationDirection.First));
+                }
+            });
+        }
 
         public static DependencyProperty NotificationAreaProperty = DependencyProperty.Register(
             nameof(NotificationArea), typeof(NotificationArea), typeof(NotifyIconList),
