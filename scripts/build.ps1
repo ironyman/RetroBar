@@ -47,6 +47,11 @@
 .PARAMETER Settings
     Open RetroBar's settings.json in the code editor and exit.
 
+.PARAMETER BuildInstaller
+    Publish a Release build for x64, x86, and ARM64, then compile the Inno Setup installer
+    (installer.iss) to produce bin\RetroBarInstaller.exe. Requires ISCC.exe (Inno Setup 6)
+    on PATH or in its default install location.
+
 .PARAMETER Help
     Show this help message.
 
@@ -67,6 +72,7 @@
     .\build.ps1 -Launch -Log                   # build, start, then tail new log
     .\build.ps1 -Paths                         # show paths to settings, logs, and themes
     .\build.ps1 -Settings                      # open settings.json in the code editor
+    .\build.ps1 -BuildInstaller                # publish Release + compile Inno Setup installer
 #>
 param(
     [Parameter(Position = 0)]
@@ -90,6 +96,7 @@ param(
     [switch]$Log,
     [switch]$Paths,
     [switch]$Settings,
+    [switch]$BuildInstaller,
     [switch]$Help,
 
     # Internal: passed by -Background to tell the spawned process to launch RetroBar after building.
@@ -275,6 +282,58 @@ function Stop-RetroBar {
     }
 }
 
+function Invoke-Installer {
+    $profiles = @('x64', 'x86', 'ARM64')
+    $proj = Join-Path $Root 'RetroBar\RetroBar.csproj'
+
+    foreach ($profile in $profiles) {
+        # installer.iss reads from RetroBar\bin\Release\net6.0-windows\publish-<arch>
+        $publishDir = Join-Path $Root "RetroBar\bin\Release\net6.0-windows\publish-$profile"
+
+        Write-Host "`n==> dotnet publish -p:PublishProfile=$profile -f $Framework" -ForegroundColor Cyan
+        # Use the project's actual TFM so the restore+build chain works with SDK 10.
+        # Override PublishDir explicitly so the output location is always deterministic
+        # regardless of how the pubxml resolves it for the given framework/platform combo.
+        dotnet publish $proj `
+            -p:PublishProfile=$profile -f $Framework `
+            -p:PublishDir="$publishDir" `
+            -p:DebugType=None -p:DebugSymbols=false
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "Publish failed for profile: $profile"
+            return
+        }
+
+        $licSrc = Join-Path $Root 'DistLicense.txt'
+        Copy-Item $licSrc (Join-Path $publishDir 'License.txt') -Force
+    }
+
+    $iscc = $null
+    if (Get-Command ISCC.exe -ErrorAction SilentlyContinue) {
+        $iscc = 'ISCC.exe'
+    } else {
+        $isccCandidates = @(
+            "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe"
+            'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+            'C:\Program Files\Inno Setup 6\ISCC.exe'
+        )
+        $iscc = $isccCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+    }
+    if (-not $iscc) {
+        Write-Error "ISCC.exe not found. Install Inno Setup 6 or run .\scripts\install-prereqs.ps1."
+        return
+    }
+
+    Write-Host "`n==> $iscc installer.iss" -ForegroundColor Cyan
+    & $iscc (Join-Path $Root 'installer.iss')
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "Inno Setup compilation failed."
+        return
+    }
+
+    $output = Join-Path $Root 'bin\RetroBarInstaller.exe'
+    Write-Host "`nInstaller built: $output" -ForegroundColor Green
+}
+
 # ---------------------------------------------------------------------------
 # Entry points
 # ---------------------------------------------------------------------------
@@ -317,6 +376,11 @@ if ($Stop) {
     Stop-RetroBar
     Disable-TaskbarAutoHide
     Restore-WindowsTaskbar
+    exit 0
+}
+
+if ($BuildInstaller) {
+    Invoke-Installer
     exit 0
 }
 
