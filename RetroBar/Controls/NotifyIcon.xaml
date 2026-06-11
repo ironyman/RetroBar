@@ -28,9 +28,6 @@
                         <Trigger Property="IsMouseOver" Value="True">
                             <Setter Property="Background" Value="{DynamicResource TrayToggleHoverBackground}"/>
                         </Trigger>
-                        <Trigger Property="IsKeyboardFocused" Value="True">
-                            <Setter Property="Background" Value="{DynamicResource TrayToggleHoverBackground}"/>
-                        </Trigger>
                         <!-- Suppress tooltip when title is null or empty -->
                         <DataTrigger Binding="{Binding Path=Title}" Value="{x:Null}">
                             <Setter Property="ToolTipService.IsEnabled" Value="False"/>

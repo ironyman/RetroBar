@@ -12,6 +12,7 @@
         MouseLeftButtonDown="Taskbar_OnMouseLeftButtonDown"
         MouseMove="Taskbar_MouseMove"
         Deactivated="Taskbar_Deactivated"
+        IsKeyboardFocusWithinChanged="Taskbar_IsKeyboardFocusWithinChanged"
         AllowDrop="True"
         Style="{DynamicResource TaskbarWindow}">
     <Window.Resources>

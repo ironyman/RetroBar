@@ -4,7 +4,8 @@
              xmlns:converters="clr-namespace:RetroBar.Converters"
              Loaded="UserControl_Loaded"
              Unloaded="UserControl_Unloaded">
-    <Button Click="JapaneseIme_OnClick"
+    <Button Focusable="False"
+            Click="JapaneseIme_OnClick"
             IsEnabled="{Binding Path=JapaneseImeEnabled, Mode=OneWay}"
             ToolTip="{Binding Path=JapaneseImeTip, Mode=OneWay}"
             Style="{DynamicResource ToolbarButton}">

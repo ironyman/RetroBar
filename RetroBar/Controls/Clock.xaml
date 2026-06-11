@@ -1,6 +1,7 @@
 ﻿<UserControl x:Class="RetroBar.Controls.Clock"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Focusable="False"
              MouseLeftButtonDown="Clock_OnMouseLeftButtonDown"
              MouseDoubleClick="Clock_OnMouseDoubleClick"
              Loaded="UserControl_Loaded"

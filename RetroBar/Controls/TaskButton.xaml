@@ -14,6 +14,7 @@
         <converters:TaskLabelConverter x:Key="taskLabelConverter" />
     </UserControl.Resources>
     <Button Name="AppButton"
+            Focusable="False"
             Click="AppButton_OnClick"
             MouseUp="AppButton_OnMouseUp"
             PreviewMouseDown="AppButton_OnPreviewMouseDown"

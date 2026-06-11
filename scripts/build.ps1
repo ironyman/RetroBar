@@ -36,6 +36,17 @@
     Stop RetroBar (same as -Stop), rebuild the specified targets, then start RetroBar again.
     Combines -Stop + build + launch in one step.
 
+.PARAMETER Log
+    Tail the RetroBar log. Alone, implies -NoRebuild and tails the current log without
+    building or launching. Combined with -Launch, -Relaunch, or -Background, the build
+    runs as normal and log tailing begins after RetroBar starts.
+
+.PARAMETER Paths
+    Print the paths to RetroBar's data files (settings, logs, themes) and exit.
+
+.PARAMETER Settings
+    Open RetroBar's settings.json in the code editor and exit.
+
 .PARAMETER Help
     Show this help message.
 
@@ -51,6 +62,11 @@
     .\build.ps1 -Relaunch                      # stop, rebuild RetroBar only, start RetroBar
     .\build.ps1 -Target All -Relaunch          # stop, rebuild all, start RetroBar
     .\build.ps1 -Relaunch -NoRebuild           # stop and start RetroBar without rebuilding
+    .\build.ps1 -Log                           # tail the current RetroBar log (no build)
+    .\build.ps1 -Relaunch -Log                 # stop, rebuild, start, then tail new log
+    .\build.ps1 -Launch -Log                   # build, start, then tail new log
+    .\build.ps1 -Paths                         # show paths to settings, logs, and themes
+    .\build.ps1 -Settings                      # open settings.json in the code editor
 #>
 param(
     [Parameter(Position = 0)]
@@ -71,6 +87,9 @@ param(
     [switch]$Stop,
     [switch]$Relaunch,
     [switch]$NoRebuild,
+    [switch]$Log,
+    [switch]$Paths,
+    [switch]$Settings,
     [switch]$Help,
 
     # Internal: passed by -Background to tell the spawned process to launch RetroBar after building.
@@ -78,6 +97,11 @@ param(
 )
 
 $Root = Split-Path $PSScriptRoot -Parent
+
+# -Log alone implies -NoRebuild (just tail; no build or launch)
+if ($Log -and -not $Launch -and -not $Relaunch -and -not $Background) {
+    $NoRebuild = $true
+}
 
 # Dependency order for 'All' — leaves first.
 $AllTargets = @(
@@ -138,6 +162,40 @@ function Start-RetroBar([string]$cfg, [string]$fw) {
     }
     Start-Process $exe
     Write-Host "RetroBar launched: $exe" -ForegroundColor Green
+}
+
+function Start-LogTail {
+    param([switch]$WaitForNew)
+
+    $logDir = Join-Path $env:LOCALAPPDATA "RetroBar\Logs"
+    $logFile = $null
+
+    if ($WaitForNew) {
+        $startTime = [DateTime]::Now
+        $deadline  = $startTime.AddSeconds(8)
+        Write-Host "Waiting for RetroBar log..." -ForegroundColor DarkCyan
+        while ([DateTime]::Now -lt $deadline -and -not $logFile) {
+            $logFile = Get-ChildItem $logDir -Filter "*.log" -ErrorAction SilentlyContinue |
+                       Where-Object { $_.CreationTime -ge $startTime.AddSeconds(-2) } |
+                       Sort-Object CreationTime -Descending |
+                       Select-Object -First 1
+            if (-not $logFile) { Start-Sleep -Milliseconds 300 }
+        }
+    }
+
+    if (-not $logFile) {
+        $logFile = Get-ChildItem $logDir -Filter "*.log" -ErrorAction SilentlyContinue |
+                   Sort-Object LastWriteTime -Descending |
+                   Select-Object -First 1
+    }
+
+    if (-not $logFile) {
+        Write-Warning "No log file found in: $logDir"
+        return
+    }
+
+    Write-Host "Tailing: $($logFile.FullName)" -ForegroundColor Cyan
+    Get-Content $logFile.FullName -Wait -Tail 30
 }
 
 function Disable-TaskbarAutoHide {
@@ -226,6 +284,35 @@ if ($Help) {
     exit 0
 }
 
+if ($Paths) {
+    $appData = Join-Path $env:LOCALAPPDATA 'RetroBar'
+    Write-Host ""
+    Write-Host "RetroBar data paths:" -ForegroundColor Cyan
+    Write-Host "  Settings : $(Join-Path $appData 'settings.json')"
+    Write-Host "  Logs     : $(Join-Path $appData 'Logs')"
+    Write-Host "  Themes   : $(Join-Path $appData 'Themes')"
+    Write-Host "  AppData  : $appData"
+    Write-Host ""
+    exit 0
+}
+
+if ($Settings) {
+    $settingsFile = Join-Path $env:LOCALAPPDATA 'RetroBar\settings.json'
+    if (-not (Test-Path $settingsFile)) {
+        Write-Warning "Settings file not found: $settingsFile (RetroBar may not have been run yet)"
+        exit 1
+    }
+    $editor = if (Get-Command code -ErrorAction SilentlyContinue) { 'code' }
+              elseif (Get-Command code-insiders -ErrorAction SilentlyContinue) { 'code-insiders' }
+              else { $null }
+    if ($editor) {
+        & $editor $settingsFile
+    } else {
+        Start-Process $settingsFile
+    }
+    exit 0
+}
+
 if ($Stop) {
     Stop-RetroBar
     Disable-TaskbarAutoHide
@@ -245,6 +332,9 @@ if ($Relaunch) {
     if ($script:BuildOk) {
         Start-RetroBar -cfg $Configuration -fw $Framework
     }
+    if ($Log -and $script:BuildOk) {
+        Start-LogTail -WaitForNew
+    }
     exit 0
 }
 
@@ -259,16 +349,20 @@ if ($Background) {
         '-Verbosity', $Verbosity
         '-Launch'
     )
+    if ($Log) { $scriptArgs += '-Log' }
     Start-Process powershell -ArgumentList $scriptArgs -WindowStyle Normal
     Write-Host "Background build started. Use .\build.ps1 -Stop to kill RetroBar and restore the taskbar." -ForegroundColor Cyan
     exit 0
 }
 
-# Foreground build (with optional -Launch)
+# Foreground build (with optional -Launch / -Log)
 $script:BuildOk = $true
 if (-not $NoRebuild) {
     Invoke-Build -targets $Target -cfg $Configuration -fw $Framework -verbosity $Verbosity
 }
 if ($Launch -and $script:BuildOk) {
     Start-RetroBar -cfg $Configuration -fw $Framework
+}
+if ($Log) {
+    Start-LogTail -WaitForNew:($Launch.IsPresent -and $script:BuildOk)
 }

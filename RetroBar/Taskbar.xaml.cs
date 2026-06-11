@@ -42,6 +42,9 @@ namespace RetroBar
         private readonly StartMenuMonitor _startMenuMonitor;
         private readonly Updater _updater;
         private bool _fullScreenSuppressed;
+
+        private IntPtr _foregroundHook = IntPtr.Zero;
+        private NativeMethods.WinEventProc _foregroundHookProc; // field keeps delegate alive
         
         public WindowManager windowManager;
         public HotkeyManager hotkeyManager;
@@ -241,6 +244,21 @@ namespace RetroBar
             SetLayoutRounding();
             SetBlur(AllowsBlur());
             UpdateTrayPosition();
+
+            // Clear WPF keyboard focus whenever any other window becomes the foreground.
+            // Win+B sets focus via UIA without sending WM_SETFOCUS/WM_ACTIVATE, so the normal
+            // WM_KILLFOCUS / Deactivated paths never fire — this hook is the only reliable signal.
+            var self = this;
+            _foregroundHookProc = (hook, evt, fgHwnd, idObj, idChild, thread, time) =>
+            {
+                if (fgHwnd != self.Handle && self.IsKeyboardFocusWithin)
+                    self.Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Input,
+                        new Action(self.ResetControlFocus));
+            };
+            _foregroundHook = NativeMethods.SetWinEventHook(
+                0x0003, 0x0003, // EVENT_SYSTEM_FOREGROUND
+                IntPtr.Zero, _foregroundHookProc, 0, 0,
+                NativeMethods.WINEVENT_OUTOFCONTEXT);
         }
         
         protected override IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
@@ -266,6 +284,12 @@ namespace RetroBar
 
         protected override void CustomClosing()
         {
+            if (_foregroundHook != IntPtr.Zero)
+            {
+                NativeMethods.UnhookWinEvent(_foregroundHook);
+                _foregroundHook = IntPtr.Zero;
+            }
+
             if (AllowClose)
             {
                 QuickLaunchToolbar.Visibility = Visibility.Collapsed;
@@ -359,6 +383,15 @@ namespace RetroBar
                 ResetControlFocus();
             }
         }
+
+        private void Taskbar_IsKeyboardFocusWithinChanged(object sender, DependencyPropertyChangedEventArgs e)
+        {
+            if (!(bool)e.NewValue)
+            {
+                ResetControlFocus();
+            }
+        }
+
         #endregion
 
         #region Context menu
@@ -447,7 +480,11 @@ namespace RetroBar
 
         private void ResetControlFocus()
         {
-            FocusDummyButton.MoveFocus(new TraversalRequest(FocusNavigationDirection.Left));
+            // Clear logical focus within the window's focus scope first, then clear keyboard focus.
+            // FocusManager.SetFocusedElement is required to remove the WPF focus adorner from
+            // the notification icons; Keyboard.ClearFocus alone does not always do so.
+            FocusManager.SetFocusedElement(this, null);
+            Keyboard.ClearFocus();
         }
 
         private void SetLayoutRounding()
