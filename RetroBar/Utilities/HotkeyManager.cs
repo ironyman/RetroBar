@@ -17,12 +17,33 @@ namespace RetroBar.Utilities
         [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
 
         private readonly HotkeyListenerWindow _listenerWindow;
-        private readonly LowLevelKeyboardHook _keyboardHook;
+        private LowLevelKeyboardHook _keyboardHook;
         private const int TOGGLE_DESKTOP = 407;
 
         public HotkeyManager()
         {
             _listenerWindow = new HotkeyListenerWindow(this);
+
+            Settings.Instance.PropertyChanged += Settings_PropertyChanged;
+
+            // Defer hotkey registration and keyboard hook installation until the application is
+            // idle after startup. Two problems are avoided by waiting:
+            //
+            // 1. Hook timeout: WH_KEYBOARD_LL callbacks are dispatched on the thread that called
+            //    SetWindowsHookEx. If that thread is busy (e.g. loading themes or creating windows),
+            //    Windows skips the callback after ~300ms and the first Win+B press slips through to
+            //    sihost/ShellExperienceHost, which focuses Explorer's tray instead of RetroBar.
+            //
+            // 2. sihost re-registration race: sihost detects that Win+B was unregistered and
+            //    re-registers it after a short delay. By waiting until idle we register after that
+            //    re-registration has settled, so our RegisterHotKey call wins.
+            var dispatcher = System.Windows.Application.Current.Dispatcher;
+            dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(InitializeHotkeys));
+        }
+
+        private void InitializeHotkeys()
+        {
+            ShellLogger.Info("HotkeyManager: Initializing hotkeys (deferred to application idle)");
 
             // Register Win+B and Win+D via RegisterHotKey first (same mechanism as Win+1-9,
             // which suppresses the Start menu automatically when Win is used as a modifier).
@@ -40,8 +61,6 @@ namespace RetroBar.Utilities
                 _listenerWindow.RegisterNumberHotkeys();
 
             _listenerWindow.RegisterVirtualDesktopHotkeys();
-
-            Settings.Instance.PropertyChanged += Settings_PropertyChanged;
         }
 
         // State for Win+D foreground tracking across two consecutive presses
@@ -128,9 +147,12 @@ namespace RetroBar.Utilities
 
         public void Dispose()
         {
-            _keyboardHook.FocusTrayRequested -= OnFocusTrayRequested;
-            _keyboardHook.ShowDesktopRequested -= OnShowDesktopRequested;
-            _keyboardHook.Dispose();
+            if (_keyboardHook != null)
+            {
+                _keyboardHook.FocusTrayRequested -= OnFocusTrayRequested;
+                _keyboardHook.ShowDesktopRequested -= OnShowDesktopRequested;
+                _keyboardHook.Dispose();
+            }
             _listenerWindow.UnregisterSystemHotkeys();
             _listenerWindow.UnregisterNumberHotkeys();
             _listenerWindow.UnregisterVirtualDesktopHotkeys();
