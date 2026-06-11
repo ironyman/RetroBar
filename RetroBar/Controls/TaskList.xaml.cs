@@ -255,11 +255,13 @@ namespace RetroBar.Controls
             }
             else
             {
-                newButtonWidth = Math.Floor(maxWidth);
+                double dpiScale = Host.DpiScale;
+                double perButtonPhysical = Math.Floor(availableWidth * dpiScale / taskCount);
+                newButtonWidth = perButtonPhysical / dpiScale;
                 SetScrollable(false);
             }
 
-            ShellLogger.Debug($"TaskList: SetTaskButtonWidth taskCount={taskCount} rows={rows} availableWidth={availableWidth:F3} maxWidth={maxWidth:F3} defaultWidth={defaultWidth} newButtonWidth={newButtonWidth} totalWidth={taskCount * newButtonWidth:F3} overflow={taskCount * newButtonWidth > availableWidth}");
+            ShellLogger.Debug($"TaskList: SetTaskButtonWidth taskCount={taskCount} rows={rows} availableWidth={availableWidth:F3} maxWidth={maxWidth:F3} defaultWidth={defaultWidth} newButtonWidth={newButtonWidth:F3} totalWidth={taskCount * newButtonWidth:F3} overflow={taskCount * newButtonWidth > availableWidth} dpiScale={Host.DpiScale}");
             ButtonWidth = newButtonWidth;
 
             // Post-layout check: confirm actual layout after WPF processes the width change
