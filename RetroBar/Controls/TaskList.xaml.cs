@@ -1,11 +1,14 @@
 ﻿using ManagedShell.AppBar;
 using ManagedShell.WindowsTasks;
 using ManagedShell.Common.Helpers;
+using ManagedShell.Common.Logging;
 using RetroBar.Utilities;
 using System;
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
+using System.Windows.Threading;
 
 namespace RetroBar.Controls
 {
@@ -213,6 +216,7 @@ namespace RetroBar.Controls
 
         private void TaskList_OnSizeChanged(object sender, SizeChangedEventArgs e)
         {
+            ShellLogger.Debug($"TaskList: SizeChanged oldSize={e.PreviousSize.Width:F3}x{e.PreviousSize.Height:F3} newSize={e.NewSize.Width:F3}x{e.NewSize.Height:F3} TasksList.ActualWidth={TasksList.ActualWidth:F3}");
             SetTaskButtonWidth();
         }
 
@@ -233,25 +237,39 @@ namespace RetroBar.Controls
 
             int taskCount = TasksList.Items.Count;
             double margin = TaskButtonLeftMargin + TaskButtonRightMargin;
-            double maxWidth = TasksList.ActualWidth / Math.Ceiling((double)taskCount / rows);
+            double availableWidth = TasksList.ActualWidth;
+            double maxWidth = availableWidth / Math.Ceiling((double)taskCount / rows);
             double defaultWidth = DefaultButtonWidth + margin;
             double minWidth = MinButtonWidth + margin;
 
+            double newButtonWidth;
             if (maxWidth > defaultWidth)
             {
-                ButtonWidth = defaultWidth;
+                newButtonWidth = defaultWidth;
                 SetScrollable(false);
             }
             else if (maxWidth < minWidth)
             {
-                ButtonWidth = Math.Ceiling(defaultWidth / 2);
+                newButtonWidth = Math.Ceiling(defaultWidth / 2);
                 SetScrollable(true);
             }
             else
             {
-                ButtonWidth = Math.Floor(maxWidth);
+                newButtonWidth = Math.Floor(maxWidth);
                 SetScrollable(false);
             }
+
+            ShellLogger.Debug($"TaskList: SetTaskButtonWidth taskCount={taskCount} rows={rows} availableWidth={availableWidth:F3} maxWidth={maxWidth:F3} defaultWidth={defaultWidth} newButtonWidth={newButtonWidth} totalWidth={taskCount * newButtonWidth:F3} overflow={taskCount * newButtonWidth > availableWidth}");
+            ButtonWidth = newButtonWidth;
+
+            // Post-layout check: confirm actual layout after WPF processes the width change
+            Dispatcher.BeginInvoke(DispatcherPriority.Loaded, (Action)(() =>
+            {
+                var wrapPanel = FindItemsPanel<WrapPanel>(TasksList);
+                double wrapHeight = wrapPanel?.ActualHeight ?? -1;
+                double wrapWidth = wrapPanel?.ActualWidth ?? -1;
+                ShellLogger.Debug($"TaskList: Post-layout TasksList.ActualWidth={TasksList.ActualWidth:F3} ButtonWidth={ButtonWidth:F3} itemCount={TasksList.Items.Count} wrapPanel={wrapWidth:F3}x{wrapHeight:F3} taskbarHeight={ActualHeight:F3} wrapping={wrapHeight > ActualHeight + 1}");
+            }));
         }
 
         private void SetScrollable(bool canScroll)
@@ -276,6 +294,18 @@ namespace RetroBar.Controls
             {
                 e.Handled = true;
             }
+        }
+
+        private static T FindItemsPanel<T>(DependencyObject parent) where T : DependencyObject
+        {
+            for (int i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
+            {
+                var child = VisualTreeHelper.GetChild(parent, i);
+                if (child is T match) return match;
+                var found = FindItemsPanel<T>(child);
+                if (found != null) return found;
+            }
+            return null;
         }
     }
 }
