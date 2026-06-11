@@ -333,6 +333,7 @@
                 <ControlTemplate TargetType="Button">
                     <Grid x:Name="ButtonRoot">
                         <Border Background="Transparent"
+                                Margin="0,0,0,-2"
                                 x:Name="ButtonBackground" />
                         <ContentPresenter Margin="4,3"
                                           x:Name="Content"
@@ -369,6 +370,7 @@
                 <ControlTemplate TargetType="Button">
                     <Grid x:Name="ButtonRoot">
                         <Border Background="{DynamicResource TaskButtonBackgroundActive}"
+                                Margin="0,0,0,-2"
                                 x:Name="ButtonBackground" />
                         <!-- Win10-style accent bar at bottom edge -->
                         <Border Background="{DynamicResource TaskButtonOuterBorderActive}"
@@ -443,6 +445,7 @@
                 <ControlTemplate TargetType="Button">
                     <Grid x:Name="ButtonRoot">
                         <Border Background="{DynamicResource TaskButtonBackgroundFlashing}"
+                                Margin="0,0,0,-2"
                                 x:Name="ButtonBackground" />
                         <Border Background="{DynamicResource TaskButtonOuterBorderFlashing}"
                                 Height="2"
@@ -873,12 +876,10 @@
                 Value="0" />
         <Setter Property="Width"
                 Value="78" />
-        <Setter Property="Height"
-                Value="30" />
         <Setter Property="HorizontalAlignment"
                 Value="Left" />
         <Setter Property="VerticalAlignment"
-                Value="Top" />
+                Value="Stretch" />
         <Setter Property="FocusVisualStyle"
                 Value="{x:Null}" />
         <Setter Property="Template">
