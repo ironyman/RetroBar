@@ -52,6 +52,10 @@
     (installer.iss) to produce bin\RetroBarInstaller.exe. Requires ISCC.exe (Inno Setup 6)
     on PATH or in its default install location.
 
+.PARAMETER UninstallRelease
+    Stop RetroBar (if running) and silently run the installed release uninstaller.
+    Looks up the Inno Setup uninstall entry in HKCU (per-user install) then HKLM.
+
 .PARAMETER Help
     Show this help message.
 
@@ -73,6 +77,7 @@
     .\build.ps1 -Paths                         # show paths to settings, logs, and themes
     .\build.ps1 -Settings                      # open settings.json in the code editor
     .\build.ps1 -BuildInstaller                # publish Release + compile Inno Setup installer
+    .\build.ps1 -UninstallRelease              # stop RetroBar and silently uninstall the release build
 #>
 param(
     [Parameter(Position = 0)]
@@ -97,6 +102,7 @@ param(
     [switch]$Paths,
     [switch]$Settings,
     [switch]$BuildInstaller,
+    [switch]$UninstallRelease,
     [switch]$Help,
 
     # Internal: passed by -Background to tell the spawned process to launch RetroBar after building.
@@ -334,6 +340,29 @@ function Invoke-Installer {
     Write-Host "`nInstaller built: $output" -ForegroundColor Green
 }
 
+function Invoke-Uninstall {
+    $appId = '{574527FE-00A4-4F85-92AD-B4B8B4077D73}_is1'
+    $uninstallKey = $null
+    foreach ($hive in @('HKCU:\', 'HKLM:\')) {
+        $key = Join-Path $hive "Software\Microsoft\Windows\CurrentVersion\Uninstall\$appId"
+        if (Test-Path $key) { $uninstallKey = $key; break }
+    }
+    if (-not $uninstallKey) {
+        Write-Warning "RetroBar does not appear to be installed (uninstall registry key not found)."
+        return
+    }
+    $uninstallExe = (Get-ItemProperty $uninstallKey -ErrorAction SilentlyContinue).UninstallString
+    if (-not $uninstallExe) {
+        Write-Warning "UninstallString not found in registry key: $uninstallKey"
+        return
+    }
+    # Strip surrounding quotes so Start-Process receives a clean path
+    $uninstallExe = $uninstallExe.Trim('"')
+    Write-Host "Running uninstaller: $uninstallExe" -ForegroundColor Cyan
+    Start-Process $uninstallExe -ArgumentList '/SILENT' -Wait
+    Write-Host "Uninstall complete." -ForegroundColor Green
+}
+
 # ---------------------------------------------------------------------------
 # Entry points
 # ---------------------------------------------------------------------------
@@ -381,6 +410,14 @@ if ($Stop) {
 
 if ($BuildInstaller) {
     Invoke-Installer
+    exit 0
+}
+
+if ($UninstallRelease) {
+    Stop-RetroBar
+    Disable-TaskbarAutoHide
+    Restore-WindowsTaskbar
+    Invoke-Uninstall
     exit 0
 }
 

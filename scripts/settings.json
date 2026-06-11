@@ -1,0 +1,150 @@
+{
+  "Language": "System",
+  "Theme": "AMOLED Black",
+  "ShowInputLanguage": false,
+  "ShowClock": true,
+  "ShowDesktopButton": false,
+  "PeekAtDesktop": false,
+  "ShowMultiMon": false,
+  "ShowQuickLaunch": false,
+  "QuickLaunchPath": "%appdata%\\Microsoft\\Internet Explorer\\Quick Launch\\User Pinned\\TaskBar",
+  "CollapseNotifyIcons": true,
+  "InvertNotifyIcons": [
+    "7820ae78-23e3-4229-82c1-e41cb67d5b9c",
+    "7820ae81-23e3-4229-82c1-e41cb67d5b9c",
+    "7820ae82-23e3-4229-82c1-e41cb67d5b9c",
+    "7820ae77-23e3-4229-82c1-e41cb67d5b9c",
+    "7820ae83-23e3-4229-82c1-e41cb67d5b9c",
+    "7820ae74-23e3-4229-82c1-e41cb67d5b9c",
+    "7820ae73-23e3-4229-82c1-e41cb67d5b9c",
+    "C:\\Users\\admin\\source\\repos\\canvas\\dist\\win-unpacked\\Canvas.exe:3",
+    "7820ae75-23e3-4229-82c1-e41cb67d5b9c",
+    "c8cac6d4-64e8-4afe-b5d6-1c4e1c9f3fb3"
+  ],
+  "NotifyIconBehaviors": [
+    {
+      "Identifier": "C:\\Users\\admin\\source\\repos\\canvas\\dist\\win-unpacked\\Canvas.exe:3:",
+      "Behavior": 2
+    },
+    {
+      "Identifier": "7820ae76-23e3-4229-82c1-e41cb67d5b9c",
+      "Behavior": 2
+    },
+    {
+      "Identifier": "7820ae75-23e3-4229-82c1-e41cb67d5b9c",
+      "Behavior": 2
+    },
+    {
+      "Identifier": "7820ae74-23e3-4229-82c1-e41cb67d5b9c",
+      "Behavior": 2
+    },
+    {
+      "Identifier": "c8cac6d4-64e8-4afe-b5d6-1c4e1c9f3fb3",
+      "Behavior": 2
+    },
+    {
+      "Identifier": "7820ae73-23e3-4229-82c1-e41cb67d5b9c",
+      "Behavior": 2
+    },
+    {
+      "Identifier": "C:\\Program Files\\WindowsApps\\Claude_1.11187.4.0_x64__pzs8sxrjxfjjc\\app\\claude.exe:3:",
+      "Behavior": 1
+    },
+    {
+      "Identifier": "C:\\Users\\admin\\source\\repos\\canvas\\dist\\win-unpacked\\Canvas.exe:3:",
+      "Behavior": 1
+    },
+    {
+      "Identifier": "C:\\Program Files\\Microsoft OneDrive\\OneDrive.exe:501:OneDrive - Personal\r\nUp to date",
+      "Behavior": 1
+    },
+    {
+      "Identifier": "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe:8:",
+      "Behavior": 1
+    },
+    {
+      "Identifier": "C:\\Program Files\\Microsoft OneDrive\\OneDrive.exe:501:OneDrive - Personal\r\nUp to date",
+      "Behavior": 1
+    },
+    {
+      "Identifier": "C:\\Program Files\\WindowsApps\\Claude_1.11187.4.0_x64__pzs8sxrjxfjjc\\app\\claude.exe:3:",
+      "Behavior": 1
+    },
+    {
+      "Identifier": "C:\\Program Files\\RustDesk\\rustdesk.exe:2:RustDesk Service is running",
+      "Behavior": 1
+    },
+    {
+      "Identifier": "C:\\Program Files (x86)\\Microsoft\\Copilot\\Application\\mscopilot.exe:8:",
+      "Behavior": 1
+    },
+    {
+      "Identifier": "C:\\Program Files\\Microsoft OneDrive\\OneDrive.exe:501:OneDrive - Personal\r\nUp to date",
+      "Behavior": 1
+    },
+    {
+      "Identifier": "C:\\Program Files\\RustDesk\\rustdesk.exe:2:RustDesk Service is running",
+      "Behavior": 1
+    },
+    {
+      "Identifier": "C:\\Program Files\\WindowsApps\\Claude_1.11187.4.0_x64__pzs8sxrjxfjjc\\app\\claude.exe:3:",
+      "Behavior": 1
+    },
+    {
+      "Identifier": "C:\\Users\\admin\\AppData\\Local\\Programs\\Ollama\\ollama app.exe:100:Ollama",
+      "Behavior": 1
+    },
+    {
+      "Identifier": "C:\\Program Files (x86)\\Microsoft\\Copilot\\Application\\mscopilot.exe:8:Copilot",
+      "Behavior": 1
+    },
+    {
+      "Identifier": "C:\\Users\\admin\\AppData\\Local\\PowerToys\\PowerToys.exe:1:PowerToys v0.96.1",
+      "Behavior": 1
+    },
+    {
+      "Identifier": "6da68f06-00f1-4e6e-8158-7f1ffd4f9db9",
+      "Behavior": 1
+    },
+    {
+      "Identifier": "C:\\Program Files\\WindowsApps\\Microsoft.CommandPalette_0.7.3271.0_x64__8wekyb3d8bbwe\\Microsoft.CmdPal.UI.exe:1000:Windows Command Palette",
+      "Behavior": 2
+    }
+  ],
+  "NotifyIconOrder": [
+    "C:\\Program Files\\RustDesk\\rustdesk.exe:2:RustDesk Service is running",
+    "C:\\Users\\admin\\AppData\\Local\\Programs\\Ollama\\ollama app.exe:100:Ollama",
+    "6da68f06-00f1-4e6e-8158-7f1ffd4f9db9",
+    "C:\\Program Files\\Microsoft OneDrive\\OneDrive.exe:501:OneDrive - Personal\nNo internet connection",
+    "ba82e2dc-f405-47ad-b032-cf0faa0e3933",
+    "7820ae78-23e3-4229-82c1-e41cb67d5b9c"
+  ],
+  "AllowFontSmoothing": true,
+  "UseSoftwareRendering": false,
+  "Edge": 3,
+  "RowCount": 1,
+  "RowLimit": 5,
+  "TaskbarWidth": 1,
+  "TaskbarWidthLimit": 7,
+  "QuickLaunchOrder": [],
+  "ShowTaskThumbnails": false,
+  "MultiMonMode": 0,
+  "TaskbarScale": 1,
+  "DebugLogging": true,
+  "AutoHide": false,
+  "LockTaskbar": false,
+  "InvertIconsMode": 0,
+  "ShowTaskBadges": false,
+  "TaskMiddleClickAction": 1,
+  "ClockClickAction": 3,
+  "CheckForUpdates": true,
+  "ShowExitMenuItem": true,
+  "ShowEndTaskButton": false,
+  "ShowStartButtonMultiMon": false,
+  "AutoHideTransparent": false,
+  "SlideTaskbarButtons": false,
+  "ShowClockSeconds": false,
+  "WinNumHotkeysAction": 1,
+  "AllowBlurBehind": true,
+  "PinnedNotifyIcons": []
+}
