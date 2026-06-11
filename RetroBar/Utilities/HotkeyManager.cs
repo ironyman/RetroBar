@@ -39,6 +39,8 @@ namespace RetroBar.Utilities
             if (Settings.Instance.WinNumHotkeysAction != WinNumHotkeysOption.WindowsDefault)
                 _listenerWindow.RegisterNumberHotkeys();
 
+            _listenerWindow.RegisterVirtualDesktopHotkeys();
+
             Settings.Instance.PropertyChanged += Settings_PropertyChanged;
         }
 
@@ -131,6 +133,7 @@ namespace RetroBar.Utilities
             _keyboardHook.Dispose();
             _listenerWindow.UnregisterSystemHotkeys();
             _listenerWindow.UnregisterNumberHotkeys();
+            _listenerWindow.UnregisterVirtualDesktopHotkeys();
             _listenerWindow?.Dispose();
         }
 
@@ -165,11 +168,15 @@ namespace RetroBar.Utilities
             private const int HOTKEY_ID_FOCUS_TRAY = 20;
             private const int HOTKEY_ID_SHOW_DESKTOP = 21;
             private const int HOTKEY_ID_ABSORBER = 22;
+            private const int HOTKEY_ID_VDESK_SWITCH = 30; // +0..+8 for Win+F1..Win+F9
+            private const int HOTKEY_ID_VDESK_MOVE = 40;   // +0..+8 for Win+Shift+F1..Win+Shift+F9
+            private const int VDESK_HOTKEY_COUNT = 9;
             private const byte VK_F24 = 0x87;
 
             private readonly HotkeyManager _manager;
             private readonly HashSet<int> _registeredNumberHotkeys = [];
             private readonly HashSet<int> _registeredSystemHotkeys = [];
+            private readonly HashSet<int> _registeredVirtualDesktopHotkeys = [];
             private const int WMTRAY_UNREGISTERHOTKEY = (int)WM.USER + 231;
             private List<TrayHotkey.Entry> _trayHotkeyTable;
             private bool _explorerResourcesLoaded;
@@ -202,6 +209,20 @@ namespace RetroBar.Utilities
 
                     if (hotkeyId == HOTKEY_ID_ABSORBER)
                         return; // Win+F24 mask key — kernel dispatched WM_HOTKEY which suppresses Start menu; nothing else to do
+
+                    if (hotkeyId >= HOTKEY_ID_VDESK_SWITCH && hotkeyId < HOTKEY_ID_VDESK_SWITCH + VDESK_HOTKEY_COUNT)
+                    {
+                        VirtualDesktopHelper.SwitchToDesktop(hotkeyId - HOTKEY_ID_VDESK_SWITCH);
+                        return;
+                    }
+
+                    if (hotkeyId >= HOTKEY_ID_VDESK_MOVE && hotkeyId < HOTKEY_ID_VDESK_MOVE + VDESK_HOTKEY_COUNT)
+                    {
+                        IntPtr foreground = GetForegroundWindow();
+                        if (foreground != IntPtr.Zero)
+                            VirtualDesktopHelper.MoveWindowToDesktop(foreground, hotkeyId - HOTKEY_ID_VDESK_MOVE);
+                        return;
+                    }
 
                     if (_registeredNumberHotkeys.Contains(hotkeyId))
                     {
@@ -498,6 +519,38 @@ namespace RetroBar.Utilities
                     ShellLogger.Debug($"HotkeyManager: Unregistered hotkey ID={id}");
                 }
                 _registeredNumberHotkeys.Clear();
+            }
+
+            public void RegisterVirtualDesktopHotkeys()
+            {
+                ShellLogger.Info("HotkeyManager: Registering virtual desktop hotkeys (Win+F1-F9, Win+Shift+F1-F9)");
+                VK[] fKeys = { VK.F1, VK.F2, VK.F3, VK.F4, VK.F5, VK.F6, VK.F7, VK.F8, VK.F9 };
+                try
+                {
+                    for (int i = 0; i < fKeys.Length; i++)
+                    {
+                        if (RegisterHotKey(Handle, HOTKEY_ID_VDESK_SWITCH + i, (uint)(MOD.WIN | MOD.NOREPEAT), (uint)fKeys[i]))
+                            _registeredVirtualDesktopHotkeys.Add(HOTKEY_ID_VDESK_SWITCH + i);
+                        else
+                            ShellLogger.Warning($"HotkeyManager: Failed to register Win+F{i + 1}");
+
+                        if (RegisterHotKey(Handle, HOTKEY_ID_VDESK_MOVE + i, (uint)(MOD.WIN | MOD.NOREPEAT | MOD.SHIFT), (uint)fKeys[i]))
+                            _registeredVirtualDesktopHotkeys.Add(HOTKEY_ID_VDESK_MOVE + i);
+                        else
+                            ShellLogger.Warning($"HotkeyManager: Failed to register Win+Shift+F{i + 1}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    ShellLogger.Warning($"HotkeyManager: Exception during RegisterVirtualDesktopHotkeys - {ex.Message}");
+                }
+            }
+
+            public void UnregisterVirtualDesktopHotkeys()
+            {
+                foreach (int id in _registeredVirtualDesktopHotkeys)
+                    UnregisterHotKey(Handle, id);
+                _registeredVirtualDesktopHotkeys.Clear();
             }
 
             public void Dispose() => DestroyHandle();
