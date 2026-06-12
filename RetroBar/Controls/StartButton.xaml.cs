@@ -81,6 +81,7 @@ namespace RetroBar.Controls
                 return;
             }
 
+            Host?.DismissStartMenu();
             SetStartMenuState(false);
         }
 
