@@ -115,9 +115,12 @@ namespace RetroBar
             {
                 _instance = new PropertiesWindow(notificationArea, dictionaryManager, screen, dpiScale, barSize);
                 _instance.Show();
+                _instance.Activate();
             }
             else
             {
+                if (_instance.WindowState == WindowState.Minimized)
+                    _instance.WindowState = WindowState.Normal;
                 _instance.Activate();
             }
 
