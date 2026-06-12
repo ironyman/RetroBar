@@ -35,6 +35,11 @@ namespace RetroBar
         public App()
         {
             _shellManager = SetupManagedShell();
+            _shellManager.TasksService.WindowInsertionIndexProvider = (win, windows) =>
+            {
+                if (!Settings.Instance.GroupAfterParent) return -1;
+                return ParentWindowHelper.FindInsertionIndex(win, windows);
+            };
 
             _explorerMonitor = new ExplorerMonitor();
             _startMenuMonitor = new StartMenuMonitor(new AppVisibilityHelper(false));

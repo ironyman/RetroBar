@@ -266,6 +266,9 @@
                                       Visibility="{Binding Source={x:Static Settings:Settings.Instance}, Path=Edge, Converter={StaticResource edgeOrientationVisibilityConverter}, ConverterParameter='horizontal'}">
                                 <Label Content="{DynamicResource slide_taskbar_buttons}" />
                             </CheckBox>
+                            <CheckBox IsChecked="{Binding Source={x:Static Settings:Settings.Instance}, Path=GroupAfterParent, UpdateSourceTrigger=PropertyChanged}">
+                                <Label Content="{DynamicResource group_after_parent}" />
+                            </CheckBox>
                         </StackPanel>
                     </GroupBox>
                     <GroupBox Header="{DynamicResource notification_area}">

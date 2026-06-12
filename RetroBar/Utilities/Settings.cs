@@ -374,6 +374,13 @@ namespace RetroBar.Utilities
             set => Set(ref _slideTaskbarButtons, value);
         }
 
+        private bool _groupAfterParent = true;
+        public bool GroupAfterParent
+        {
+            get => _groupAfterParent;
+            set => Set(ref _groupAfterParent, value);
+        }
+
         private bool _showClockSeconds = false;
         public bool ShowClockSeconds
         {
