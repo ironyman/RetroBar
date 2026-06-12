@@ -47,6 +47,9 @@
 .PARAMETER Settings
     Open RetroBar's settings.json in the code editor and exit.
 
+.PARAMETER OpenLog
+    Open the latest RetroBar log file in the code editor and exit.
+
 .PARAMETER BuildInstaller
     Publish a Release build for x64, x86, and ARM64, then compile the Inno Setup installer
     (installer.iss) to produce bin\RetroBarInstaller.exe. Requires ISCC.exe (Inno Setup 6)
@@ -76,6 +79,7 @@
     .\build.ps1 -Launch -Log                   # build, start, then tail new log
     .\build.ps1 -Paths                         # show paths to settings, logs, and themes
     .\build.ps1 -Settings                      # open settings.json in the code editor
+    .\build.ps1 -OpenLog                       # open the latest log file in the code editor
     .\build.ps1 -BuildInstaller                # publish Release + compile Inno Setup installer
     .\build.ps1 -UninstallRelease              # stop RetroBar and silently uninstall the release build
 #>
@@ -101,6 +105,7 @@ param(
     [switch]$Log,
     [switch]$Paths,
     [switch]$Settings,
+    [switch]$OpenLog,
     [switch]$BuildInstaller,
     [switch]$UninstallRelease,
     [switch]$Help,
@@ -401,6 +406,26 @@ if ($Settings) {
     exit 0
 }
 
+if ($OpenLog) {
+    $logDir = Join-Path $env:LOCALAPPDATA 'RetroBar\Logs'
+    $logFile = Get-ChildItem $logDir -Filter '*.log' -ErrorAction SilentlyContinue |
+               Sort-Object LastWriteTime -Descending |
+               Select-Object -First 1
+    if (-not $logFile) {
+        Write-Warning "No log file found in: $logDir (RetroBar may not have been run yet)"
+        exit 1
+    }
+    $editor = if (Get-Command code -ErrorAction SilentlyContinue) { 'code' }
+              elseif (Get-Command code-insiders -ErrorAction SilentlyContinue) { 'code-insiders' }
+              else { $null }
+    if ($editor) {
+        & $editor $logFile.FullName
+    } else {
+        Start-Process $logFile.FullName
+    }
+    exit 0
+}
+
 if ($Stop) {
     Stop-RetroBar
     Disable-TaskbarAutoHide
@@ -427,7 +452,7 @@ if ($Relaunch) {
     Restore-WindowsTaskbar
     $script:BuildOk = $true
     if (-not $NoRebuild) {
-        $relaunchTarget = if ($Target -contains 'All') { @('RetroBar') } else { $Target }
+        $relaunchTarget = if ($PSBoundParameters.ContainsKey('Target')) { $Target } else { @('RetroBar') }
         Invoke-Build -targets $relaunchTarget -cfg $Configuration -fw $Framework -verbosity $Verbosity
     }
     if ($script:BuildOk) {
