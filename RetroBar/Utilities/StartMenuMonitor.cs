@@ -91,6 +91,17 @@ namespace RetroBar.Utilities
             }
         }
 
+        public bool IsCurrentlyVisible()
+        {
+            if (EnvironmentHelper.IsWindows8OrBetter && isModernStartMenuOpen())
+                return true;
+            if (isClassicStartMenuOpen())
+                return true;
+            if (isOpenShellMenuOpen())
+                return true;
+            return false;
+        }
+
         private bool isModernStartMenuOpen()
         {
             if (_appVisibilityHelper == null)

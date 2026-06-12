@@ -500,6 +500,8 @@ namespace RetroBar
             }
         }
 
+        public bool IsStartMenuOpen => _startMenuOpen;
+
         public void SetStartMenuOpen(bool isOpen)
         {
             bool currentAutoHide = AllowAutoHide;
@@ -508,6 +510,14 @@ namespace RetroBar
             if (AllowAutoHide != currentAutoHide)
             {
                 OnPropertyChanged(nameof(AllowAutoHide));
+            }
+        }
+
+        public void DismissStartMenu()
+        {
+            if (_startMenuMonitor.IsCurrentlyVisible())
+            {
+                ShellHelper.ShowStartMenu();
             }
         }
 
@@ -565,6 +575,27 @@ namespace RetroBar
         {
             return Settings.Instance.AllowBlurBehind &&
                    (Application.Current.FindResource("AllowsTransparency") as bool? ?? false);
+        }
+
+        private void Taskbar_OnPreviewMouseDown(object sender, MouseButtonEventArgs e)
+        {
+            if (e.OriginalSource is DependencyObject source &&
+                !IsDescendantOf(source, StartButton))
+            {
+                DismissStartMenu();
+            }
+        }
+
+        private static bool IsDescendantOf(DependencyObject element, DependencyObject ancestor)
+        {
+            DependencyObject current = element;
+            while (current != null)
+            {
+                if (current == ancestor) return true;
+                current = System.Windows.Media.VisualTreeHelper.GetParent(current) ??
+                          LogicalTreeHelper.GetParent(current);
+            }
+            return false;
         }
 
         #region Unlocked taskbar drag hook
