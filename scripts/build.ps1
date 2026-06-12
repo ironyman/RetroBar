@@ -80,7 +80,7 @@
     .\build.ps1 -Paths                         # show paths to settings, logs, and themes
     .\build.ps1 -Settings                      # open settings.json in the code editor
     .\build.ps1 -OpenLog                       # open the latest log file in the code editor
-    .\build.ps1 -BuildInstaller                # publish Release + compile Inno Setup installer
+    .\build.ps1 -BuildInstaller                # publish Release + compile Inno Setup installer. Use /silent to install automatically.
     .\build.ps1 -UninstallRelease              # stop RetroBar and silently uninstall the release build
 #>
 param(
