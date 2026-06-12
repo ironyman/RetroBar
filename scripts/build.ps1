@@ -157,7 +157,7 @@ function Invoke-Build([string[]]$targets, [string]$cfg, [string]$fw, [string]$ve
     $failed = [System.Collections.Generic.List[string]]::new()
     foreach ($proj in $projects) {
         Write-Host "`n==> dotnet build $(Split-Path $proj -Leaf) -c $cfg -f $fw -v $verbosity" -ForegroundColor Cyan
-        dotnet build $proj -c $cfg -f $fw --no-incremental -v $verbosity
+        dotnet build $proj -c $cfg -f $fw -v $verbosity
         if ($LASTEXITCODE -ne 0) {
             $failed.Add($proj)
             Write-Warning "Build failed: $proj"
