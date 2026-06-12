@@ -919,6 +919,10 @@
             <DataTrigger Binding="{Binding Path=Orientation, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type Window}}}"
                          Value="Vertical">
                 <DataTrigger.Setters>
+                    <Setter Property="HorizontalAlignment"
+                            Value="Stretch" />
+                    <Setter Property="Width"
+                            Value="Auto" />
                     <Setter Property="Height"
                             Value="28" />
                     <Setter Property="Margin"
