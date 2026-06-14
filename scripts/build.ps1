@@ -55,6 +55,15 @@
     (installer.iss) to produce bin\RetroBarInstaller.exe. Requires ISCC.exe (Inno Setup 6)
     on PATH or in its default install location.
 
+.PARAMETER Install
+    Stop RetroBar (if running), then silently run the built installer at bin\RetroBarInstaller.exe.
+    Build the installer first with -BuildInstaller.
+
+.PARAMETER Uninstall
+    Stop RetroBar (if running) and silently run the installed release uninstaller.
+    Looks up the Inno Setup uninstall entry in HKCU (per-user install) then HKLM.
+    Alias for -UninstallRelease.
+
 .PARAMETER UninstallRelease
     Stop RetroBar (if running) and silently run the installed release uninstaller.
     Looks up the Inno Setup uninstall entry in HKCU (per-user install) then HKLM.
@@ -81,7 +90,9 @@
     .\build.ps1 -Settings                      # open settings.json in the code editor
     .\build.ps1 -OpenLog                       # open the latest log file in the code editor
     .\build.ps1 -BuildInstaller                # publish Release + compile Inno Setup installer. Use /silent to install automatically.
-    .\build.ps1 -UninstallRelease              # stop RetroBar and silently uninstall the release build
+    .\build.ps1 -Install                       # stop RetroBar and silently install from bin\RetroBarInstaller.exe
+    .\build.ps1 -Uninstall                     # stop RetroBar and silently uninstall the release build
+    .\build.ps1 -UninstallRelease              # same as -Uninstall
 #>
 param(
     [Parameter(Position = 0)]
@@ -107,6 +118,8 @@ param(
     [switch]$Settings,
     [switch]$OpenLog,
     [switch]$BuildInstaller,
+    [switch]$Install,
+    [switch]$Uninstall,
     [switch]$UninstallRelease,
     [switch]$Help,
 
@@ -345,6 +358,17 @@ function Invoke-Installer {
     Write-Host "`nInstaller built: $output" -ForegroundColor Green
 }
 
+function Invoke-Install {
+    $installer = Join-Path $Root 'bin\RetroBarInstaller.exe'
+    if (-not (Test-Path $installer)) {
+        Write-Error "Installer not found: $installer`nBuild it first with: .\build.ps1 -BuildInstaller"
+        return
+    }
+    Write-Host "Running installer silently: $installer" -ForegroundColor Cyan
+    Start-Process $installer -ArgumentList '/SILENT' -Wait
+    Write-Host "Install complete." -ForegroundColor Green
+}
+
 function Invoke-Uninstall {
     $appId = '{574527FE-00A4-4F85-92AD-B4B8B4077D73}_is1'
     $uninstallKey = $null
@@ -438,7 +462,15 @@ if ($BuildInstaller) {
     exit 0
 }
 
-if ($UninstallRelease) {
+if ($Install) {
+    Stop-RetroBar
+    Disable-TaskbarAutoHide
+    Restore-WindowsTaskbar
+    Invoke-Install
+    exit 0
+}
+
+if ($Uninstall -or $UninstallRelease) {
     Stop-RetroBar
     Disable-TaskbarAutoHide
     Restore-WindowsTaskbar

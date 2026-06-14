@@ -86,7 +86,7 @@ namespace RetroBar.Utilities
             set => Set(ref _language, value);
         }
 
-        private string _theme = "Windows 95-98";
+        private string _theme = "AMOLED Black";
         public string Theme
         {
             get => _theme;
@@ -121,14 +121,14 @@ namespace RetroBar.Utilities
             set => Set(ref _peekAtDesktop, value);
         }
 
-        private bool _showMultiMon = false;
+        private bool _showMultiMon = true;
         public bool ShowMultiMon
         {
             get => _showMultiMon;
             set => Set(ref _showMultiMon, value);
         }
 
-        private bool _showQuickLaunch = true;
+        private bool _showQuickLaunch = false;
         public bool ShowQuickLaunch
         {
             get => _showQuickLaunch;
@@ -142,7 +142,7 @@ namespace RetroBar.Utilities
             set => Set(ref _quickLaunchPath, value);
         }
 
-        private bool _collapseNotifyIcons = false;
+        private bool _collapseNotifyIcons = true;
                            public bool CollapseNotifyIcons
         {
             get => _collapseNotifyIcons;
@@ -260,7 +260,7 @@ namespace RetroBar.Utilities
             set => Set(ref _showTaskThumbnails, value);
         }
 
-        private MultiMonOption _multiMonMode = MultiMonOption.AllTaskbars;
+        private MultiMonOption _multiMonMode = MultiMonOption.SameAsWindow;
         public MultiMonOption MultiMonMode
         {
             get => _multiMonMode;
@@ -288,7 +288,7 @@ namespace RetroBar.Utilities
             set => Set(ref _autoHide, value);
         }
 
-        private bool _lockTaskbar = false;
+        private bool _lockTaskbar = true;
         public bool LockTaskbar
         {
             get => _lockTaskbar;
@@ -302,7 +302,7 @@ namespace RetroBar.Utilities
             set => SetEnum(ref _invertIconsMode, value);
         }
 
-        private bool _showTaskBadges = true;
+        private bool _showTaskBadges = false;
         public bool ShowTaskBadges
         {
             get => _showTaskBadges;
@@ -353,7 +353,7 @@ namespace RetroBar.Utilities
             set => Set(ref _showEndTaskButton, value);
         }
 
-        private bool _showStartButtonMultiMon = false;
+        private bool _showStartButtonMultiMon = true;
         public bool ShowStartButtonMultiMon
         {
             get => _showStartButtonMultiMon;
@@ -388,7 +388,7 @@ namespace RetroBar.Utilities
             set => Set(ref _showClockSeconds, value);
         }
 
-        private WinNumHotkeysOption _winNumHotkeysAction = WinNumHotkeysOption.WindowsDefault;
+        private WinNumHotkeysOption _winNumHotkeysAction = WinNumHotkeysOption.SwitchTasks;
         public WinNumHotkeysOption WinNumHotkeysAction
         {
             get => _winNumHotkeysAction;
