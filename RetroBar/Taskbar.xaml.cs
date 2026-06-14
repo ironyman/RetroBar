@@ -42,6 +42,7 @@ namespace RetroBar
         private readonly StartMenuMonitor _startMenuMonitor;
         private readonly Updater _updater;
         private bool _fullScreenSuppressed;
+        private bool _userClickedRetroBar;
 
         private IntPtr _foregroundHook = IntPtr.Zero;
         private NativeMethods.WinEventProc _foregroundHookProc; // field keeps delegate alive
@@ -86,32 +87,85 @@ namespace RetroBar
             AutoHideElement = TaskbarContentControl;
 
             PropertyChanged += Taskbar_PropertyChanged;
+            PreviewMouseDown += OnTaskbarPreviewMouseDownFullScreen;
 
             _startMenuMonitor.StartMenuVisibilityChanged += StartMenuMonitor_StartMenuVisibilityChanged;
             _shellManager.TasksService.WindowActivated += TasksService_WindowActivated;
         }
 
+        private void SetFullScreenSuppressed(bool suppressed)
+        {
+            ShellLogger.Debug($"Taskbar: SetFullScreenSuppressed({suppressed})");
+            _fullScreenSuppressed = suppressed;
+
+            if (Handle != IntPtr.Zero)
+            {
+                int exStyle = NativeMethods.GetWindowLong(Handle, NativeMethods.GWL_EXSTYLE);
+                if (suppressed)
+                    exStyle &= ~(int)NativeMethods.ExtendedWindowStyles.WS_EX_NOACTIVATE;
+                else
+                    exStyle |= (int)NativeMethods.ExtendedWindowStyles.WS_EX_NOACTIVATE;
+                NativeMethods.SetWindowLong(Handle, NativeMethods.GWL_EXSTYLE, exStyle);
+            }
+        }
+
+        protected override void OnFullScreenEnter(FullScreenApp app)
+        {
+            if (_fullScreenSuppressed)
+            {
+                ShellLogger.Debug("Taskbar: OnFullScreenEnter blocked — waiting for user to switch away from RetroBar");
+                return;
+            }
+            ShellLogger.Debug("Taskbar: OnFullScreenEnter — hiding RetroBar");
+            _fullScreenSuppressed = false;
+            base.OnFullScreenEnter(app);
+        }
+
+        private void OnTaskbarPreviewMouseDownFullScreen(object sender, MouseButtonEventArgs e)
+        {
+            if (!Topmost || !HasFullScreenApp()) return;
+
+            _userClickedRetroBar = true;
+            if (!_fullScreenSuppressed)
+                SetFullScreenSuppressed(true);
+            ShellLogger.Debug("Taskbar: PreviewMouseDown — user clicked RetroBar while fullscreen app present, suppressing hide");
+        }
+
         private void TasksService_WindowActivated(object sender, ManagedShell.WindowsTasks.WindowEventArgs e)
         {
-            // If full-screen is suppressed, and a full-screen window is activated, it's time to un-suppress.
+            ShellLogger.Debug($"Taskbar: TasksService_WindowActivated hwnd=0x{e.Window.Handle:X} " +
+                $"suppressed={_fullScreenSuppressed} block={_fullScreenSuppressed} hasFS={HasFullScreenApp()}");
 
-            if (!_fullScreenSuppressed)
+            // If the user interacted with RetroBar and has now switched back to the FS app
+            // (via Alt+Tab, keyboard, or click), clear the block and hide RetroBar.
+            // This covers the case the mouse hook misses: keyboard-only navigation.
+            if (_userClickedRetroBar)
             {
-                return;
+                for (int i = 0; i < _fullScreenHelper.FullScreenApps.Count; i++)
+                {
+                    if (_fullScreenHelper.FullScreenApps[i].hWnd == e.Window.Handle)
+                    {
+                        ShellLogger.Debug("Taskbar: FS app reactivated after RetroBar interaction — dismissing via activation");
+                        _fullScreenSuppressed = false;
+                        _userClickedRetroBar = false;
+                        base.OnFullScreenEnter(_fullScreenHelper.FullScreenApps[i]);
+                        return;
+                    }
+                }
             }
 
-            _fullScreenSuppressed = false;
+            if (!_fullScreenSuppressed) return;
 
-            if (!HasFullScreenApp())
-            {
-                return;
-            }
+            SetFullScreenSuppressed(false);
+
+            if (!HasFullScreenApp()) return;
 
             for (int i = 0; i < _fullScreenHelper.FullScreenApps.Count; i++)
             {
                 if (_fullScreenHelper.FullScreenApps[i].hWnd == e.Window.Handle)
                 {
-                    base.OnFullScreenEnter(_fullScreenHelper.FullScreenApps[i]);
+                    ShellLogger.Debug("Taskbar: Activated window is a full-screen app — calling OnFullScreenEnter");
+                    OnFullScreenEnter(_fullScreenHelper.FullScreenApps[i]);
                     return;
                 }
             }
@@ -119,12 +173,29 @@ namespace RetroBar
 
         private void StartMenuMonitor_StartMenuVisibilityChanged(object sender, StartMenuMonitor.StartMenuMonitorEventArgs e)
         {
-            if (!HasFullScreenApp() || !e.Visible)
+            ShellLogger.Debug($"Taskbar: StartMenuVisibilityChanged visible={e.Visible} hasFS={HasFullScreenApp()} " +
+                $"block={_fullScreenSuppressed}");
+
+            if (!e.Visible)
+            {
+                // Start menu closed. If the user never clicked RetroBar during this session,
+                // clear the proactive block so the FS app can hide RetroBar when it regains focus.
+                if (!_userClickedRetroBar)
+                {
+                    _fullScreenSuppressed = false;
+                    ShellLogger.Debug("Taskbar: Start menu closed without user clicking RetroBar — clearing block");
+                }
+                return;
+            }
+
+            if (!HasFullScreenApp())
             {
                 return;
             }
 
-            _fullScreenSuppressed = true;
+            _userClickedRetroBar = false;
+            SetFullScreenSuppressed(true);
+
             base.OnFullScreenLeave();
         }
 
@@ -297,6 +368,7 @@ namespace RetroBar
                 Settings.Instance.PropertyChanged -= Settings_PropertyChanged;
                 _startMenuMonitor.StartMenuVisibilityChanged -= StartMenuMonitor_StartMenuVisibilityChanged;
                 _shellManager.TasksService.WindowActivated -= TasksService_WindowActivated;
+                PreviewMouseDown -= OnTaskbarPreviewMouseDownFullScreen;
             }
         }
 
@@ -559,15 +631,31 @@ namespace RetroBar
         {
             bool hasFullScreenApp = false;
 
+            ShellLogger.Debug($"Taskbar: HasFullScreenApp screen={Screen.DeviceName} appCount={_fullScreenHelper.FullScreenApps.Count}");
+
             foreach (var app in _fullScreenHelper.FullScreenApps)
             {
-                if (app.screen.DeviceName == Screen.DeviceName || app.screen.IsVirtualScreen)
+                bool matches = app.screen.DeviceName == Screen.DeviceName || app.screen.IsVirtualScreen;
+                ShellLogger.Debug($"Taskbar: HasFullScreenApp app hwnd=0x{app.hWnd:X} appScreen={app.screen.DeviceName} isVirtual={app.screen.IsVirtualScreen} matches={matches}");
+                if (matches)
                 {
                     hasFullScreenApp = true;
                     break;
                 }
             }
 
+            foreach (var app in _fullScreenHelper.InactiveFullScreenApps)
+            {
+                bool matches = app.screen.DeviceName == Screen.DeviceName || app.screen.IsVirtualScreen;
+                ShellLogger.Debug($"Taskbar: HasFullScreenApp app hwnd=0x{app.hWnd:X} appScreen={app.screen.DeviceName} isVirtual={app.screen.IsVirtualScreen} matches={matches}");
+                if (matches)
+                {
+                    hasFullScreenApp = true;
+                    break;
+                }
+            }
+
+            ShellLogger.Debug($"Taskbar: HasFullScreenApp result={hasFullScreenApp}");
             return hasFullScreenApp;
         }
 
@@ -579,11 +667,12 @@ namespace RetroBar
 
         private void Taskbar_OnPreviewMouseDown(object sender, MouseButtonEventArgs e)
         {
-            if (e.OriginalSource is DependencyObject source &&
-                !IsDescendantOf(source, StartButton))
-            {
-                DismissStartMenu();
-            }
+            // Why do you need to dismiss start menu? It should dismiss automatically when focus leaves start menu.
+            // if (e.OriginalSource is DependencyObject source &&
+            //     !IsDescendantOf(source, StartButton))
+            // {
+            //     DismissStartMenu();
+            // }
         }
 
         private static bool IsDescendantOf(DependencyObject element, DependencyObject ancestor)
