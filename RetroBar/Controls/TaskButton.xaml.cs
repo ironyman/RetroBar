@@ -1,6 +1,7 @@
 ﻿using System;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
@@ -30,6 +31,7 @@ namespace RetroBar.Controls
         private ApplicationWindow Window;
         private TaskButtonStyleConverter StyleConverter = new TaskButtonStyleConverter();
         private ApplicationWindow.WindowState PressedWindowState = ApplicationWindow.WindowState.Inactive;
+        private IntPtr _shellFlyoutHwnd;
 
         private DelayedActivationHandler dragHandler;
         private bool _isLoaded;
@@ -248,6 +250,12 @@ namespace RetroBar.Controls
             }
             else
             {
+                if (_shellFlyoutHwnd != IntPtr.Zero)
+                {
+                    NativeMethods.PostMessage(_shellFlyoutHwnd, (uint)NativeMethods.WM.KEYDOWN, (IntPtr)NativeMethods.VK.ESCAPE, IntPtr.Zero);
+                    NativeMethods.PostMessage(_shellFlyoutHwnd, (uint)NativeMethods.WM.KEYUP, (IntPtr)NativeMethods.VK.ESCAPE, IntPtr.Zero);
+                    _shellFlyoutHwnd = IntPtr.Zero;
+                }
                 Window?.BringToFront();
             }
         }
@@ -257,6 +265,32 @@ namespace RetroBar.Controls
             if (e.ChangedButton == MouseButton.Left)
             {
                 PressedWindowState = Window.State;
+                IntPtr foreground = NativeMethods.GetForegroundWindow();
+                _shellFlyoutHwnd = IsShellFlyoutWindow(foreground) ? foreground : IntPtr.Zero;
+            }
+        }
+
+        private static bool IsShellFlyoutWindow(IntPtr hwnd)
+        {
+            if (hwnd == IntPtr.Zero) return false;
+            try
+            {
+                var className = new StringBuilder(256);
+                NativeMethods.GetClassName(hwnd, className, className.Capacity);
+                NativeMethods.GetWindowThreadProcessId(hwnd, out uint procId);
+
+                string procName = Process.GetProcessById((int)procId).ProcessName;
+
+                if (className.ToString().Equals("WindowsDashboard", StringComparison.OrdinalIgnoreCase) &&
+                    procName.Equals("Widgets", StringComparison.OrdinalIgnoreCase))
+                    return true;
+
+                return procName.Equals("ShellExperienceHost", StringComparison.OrdinalIgnoreCase)
+                    || procName.Equals("Shellhost", StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                return false;
             }
         }
 
