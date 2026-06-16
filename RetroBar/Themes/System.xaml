@@ -42,7 +42,8 @@
     </Style>
 
     <Style TargetType="MenuItem"
-           x:Key="TaskManMenuItem">
+           x:Key="TaskManMenuItem"
+           BasedOn="{StaticResource {x:Type MenuItem}}">
         <Setter Property="Header"
                 Value="{DynamicResource show_taskman_2k}" />
     </Style>
@@ -679,7 +680,8 @@
     <ToolTip x:Key="StartButtonTip" Content="{DynamicResource start_button_tip}" />
     <ToolTip x:Key="ShowDesktopButtonTip" Content="{DynamicResource show_desktop_tip}" />
     <Style TargetType="MenuItem"
-           x:Key="ShowDesktopItem">
+           x:Key="ShowDesktopItem"
+           BasedOn="{StaticResource {x:Type MenuItem}}">
         <Setter Property="Header"
                 Value="{DynamicResource show_desktop}" />
         <Setter Property="FontWeight"

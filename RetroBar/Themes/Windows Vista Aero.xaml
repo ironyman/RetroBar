@@ -380,7 +380,8 @@
                  UriSource="../Resources/startvistabuttonlgscaled.png" />
 
     <Style TargetType="MenuItem"
-           x:Key="TaskManMenuItem">
+           x:Key="TaskManMenuItem"
+           BasedOn="{StaticResource {x:Type MenuItem}}">
         <Setter Property="Header"
                 Value="{DynamicResource show_taskman}" />
     </Style>
