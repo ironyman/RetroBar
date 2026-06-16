@@ -1,13 +1,14 @@
 ﻿using System;
 using System.ComponentModel;
 using System.Diagnostics;
-using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media.Animation;
 using ManagedShell.Common.Helpers;
+using ManagedShell.Common.Logging;
 using ManagedShell.Interop;
 using ManagedShell.WindowsTasks;
 using RetroBar.Converters;
@@ -31,10 +32,10 @@ namespace RetroBar.Controls
         private ApplicationWindow Window;
         private TaskButtonStyleConverter StyleConverter = new TaskButtonStyleConverter();
         private ApplicationWindow.WindowState PressedWindowState = ApplicationWindow.WindowState.Inactive;
-        private IntPtr _shellFlyoutHwnd;
 
         private DelayedActivationHandler dragHandler;
         private bool _isLoaded;
+        private LowLevelMouseHook _contextMenuHook;
 
         public TaskButton()
         {
@@ -155,6 +156,12 @@ namespace RetroBar.Controls
 
         private void AppButton_OnContextMenuOpening(object sender, ContextMenuEventArgs e)
         {
+            ShellLogger.Debug($"TaskButton: ContextMenuOpening for {Window?.Title}");
+            bool flyoutWasActive = ShellFlyoutHelper.IsShellFlyoutActive();
+            ShellLogger.Debug($"TaskButton: ShellFlyout was active={flyoutWasActive}, calling DismissIfActive");
+            ShellFlyoutHelper.DismissIfActive();
+            ShellLogger.Debug($"TaskButton: DismissIfActive returned, proceeding with context menu");
+
             if (Window == null)
             {
                 return;
@@ -250,47 +257,21 @@ namespace RetroBar.Controls
             }
             else
             {
-                if (_shellFlyoutHwnd != IntPtr.Zero)
-                {
-                    NativeMethods.PostMessage(_shellFlyoutHwnd, (uint)NativeMethods.WM.KEYDOWN, (IntPtr)NativeMethods.VK.ESCAPE, IntPtr.Zero);
-                    NativeMethods.PostMessage(_shellFlyoutHwnd, (uint)NativeMethods.WM.KEYUP, (IntPtr)NativeMethods.VK.ESCAPE, IntPtr.Zero);
-                    _shellFlyoutHwnd = IntPtr.Zero;
-                }
                 Window?.BringToFront();
             }
         }
 
         private void AppButton_OnPreviewMouseDown(object sender, MouseButtonEventArgs e)
         {
+            // Right-click: DismissIfActive is called in AppButton_OnContextMenuOpening instead,
+            // after mouse-up, to avoid blocking here while a queued right mouse-up closes the menu.
+            if (e.ChangedButton != MouseButton.Right)
+            {
+                ShellFlyoutHelper.DismissIfActive();
+            }
             if (e.ChangedButton == MouseButton.Left)
             {
                 PressedWindowState = Window.State;
-                IntPtr foreground = NativeMethods.GetForegroundWindow();
-                _shellFlyoutHwnd = IsShellFlyoutWindow(foreground) ? foreground : IntPtr.Zero;
-            }
-        }
-
-        private static bool IsShellFlyoutWindow(IntPtr hwnd)
-        {
-            if (hwnd == IntPtr.Zero) return false;
-            try
-            {
-                var className = new StringBuilder(256);
-                NativeMethods.GetClassName(hwnd, className, className.Capacity);
-                NativeMethods.GetWindowThreadProcessId(hwnd, out uint procId);
-
-                string procName = Process.GetProcessById((int)procId).ProcessName;
-
-                if (className.ToString().Equals("WindowsDashboard", StringComparison.OrdinalIgnoreCase) &&
-                    procName.Equals("Widgets", StringComparison.OrdinalIgnoreCase))
-                    return true;
-
-                return procName.Equals("ShellExperienceHost", StringComparison.OrdinalIgnoreCase)
-                    || procName.Equals("Shellhost", StringComparison.OrdinalIgnoreCase);
-            }
-            catch
-            {
-                return false;
             }
         }
 
@@ -334,7 +315,45 @@ namespace RetroBar.Controls
 
         private void ContextMenu_OpenedOrClosed(object sender, RoutedEventArgs e)
         {
+            string eventName = e.RoutedEvent == ContextMenu.OpenedEvent ? "Opened" : "Closed";
+            ShellLogger.Debug($"TaskButton: ContextMenu_{eventName} for {Window?.Title}, flyoutActive={ShellFlyoutHelper.IsShellFlyoutActive()}, stack={new StackTrace(true)}");
+
             BindingOperations.GetMultiBindingExpression(AppButton, StyleProperty).UpdateTarget();
+
+            if (e.RoutedEvent == ContextMenu.OpenedEvent)
+            {
+                _contextMenuHook = new LowLevelMouseHook();
+                _contextMenuHook.LowLevelMouseEvent += OnContextMenuMouseEvent;
+                _contextMenuHook.Initialize();
+            }
+            else
+            {
+                _contextMenuHook?.Dispose();
+                _contextMenuHook = null;
+            }
+        }
+
+        private void OnContextMenuMouseEvent(object sender, LowLevelMouseHook.LowLevelMouseEventArgs args)
+        {
+            if (args.Message != NativeMethods.WM.LBUTTONDOWN && args.Message != NativeMethods.WM.RBUTTONDOWN)
+                return;
+
+            var menu = AppButton?.ContextMenu;
+            if (menu == null || !menu.IsOpen) return;
+
+            try
+            {
+                if (PresentationSource.FromVisual(menu) is not HwndSource menuSource) return;
+
+                NativeMethods.GetWindowRect(menuSource.Handle, out NativeMethods.Rect rect);
+                var pt = args.HookStruct.pt;
+                bool inside = pt.X >= rect.Left && pt.X <= rect.Right && pt.Y >= rect.Top && pt.Y <= rect.Bottom;
+                if (!inside)
+                {
+                    Dispatcher.BeginInvoke(() => { if (menu.IsOpen) menu.IsOpen = false; });
+                }
+            }
+            catch { }
         }
     }
 }

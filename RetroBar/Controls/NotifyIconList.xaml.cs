@@ -271,6 +271,7 @@ namespace RetroBar.Controls
 
         private void NotifyIconToggleButton_OnClick(object sender, RoutedEventArgs e)
         {
+            ShellFlyoutHelper.DismissIfActive();
             if (NotifyIconToggleButton.IsChecked == true)
                 NotifyIcons.ItemsSource = _allUserIcons;
             else

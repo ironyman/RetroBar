@@ -49,6 +49,9 @@ namespace RetroBar.Utilities
 
         private IntPtr _hook = IntPtr.Zero;
         private LowLevelMouseProcDelegate _hookDelegate;
+        // Prevents this instance (and _hookDelegate) from being GC'd while the
+        // Windows hook is active, even if the owning object drops its reference.
+        private GCHandle _selfHandle;
 
         public LowLevelMouseHook() {
             _hookDelegate = MouseHookProc;
@@ -66,6 +69,7 @@ namespace RetroBar.Utilities
                     return false;
                 }
 
+                _selfHandle = GCHandle.Alloc(this);
                 return true;
             }
         }
@@ -97,6 +101,9 @@ namespace RetroBar.Utilities
 
             UnhookWindowsHookEx(_hook);
             _hook = IntPtr.Zero;
+
+            if (_selfHandle.IsAllocated)
+                _selfHandle.Free();
         }
     }
 }
