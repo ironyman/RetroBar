@@ -60,11 +60,6 @@ namespace RetroBar.Utilities
         /// </summary>
         public bool IgnoreBKey { get; set; }
 
-        /// <summary>
-        /// When true, Win+D is handled via RegisterHotKey and the hook should not intercept it.
-        /// </summary>
-        public bool IgnoreDKey { get; set; }
-
         private IntPtr _hook = IntPtr.Zero;
         private readonly LowLevelKeyboardProcDelegate _hookDelegate;
         private bool _blockNextBUp;
@@ -124,8 +119,7 @@ namespace RetroBar.Utilities
                         }
                         if (vk == (uint)VK.KEY_D)
                         {
-                            if (!IgnoreDKey)
-                                ShowDesktopRequested?.Invoke();
+                            ShowDesktopRequested?.Invoke();
                             _blockNextDUp = true;
                             _winChordIntercepted = true;
                             return (IntPtr)1;

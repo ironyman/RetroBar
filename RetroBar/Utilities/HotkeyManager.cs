@@ -15,6 +15,7 @@ namespace RetroBar.Utilities
         [DllImport("user32.dll")] private static extern bool SwitchToThisWindow(IntPtr hWnd, bool fAltTab);
         [DllImport("user32.dll")] private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
         [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
+        [DllImport("user32.dll")] private static extern bool IsZoomed(IntPtr hWnd);
 
         private readonly HotkeyListenerWindow _listenerWindow;
         private LowLevelKeyboardHook _keyboardHook;
@@ -52,7 +53,6 @@ namespace RetroBar.Utilities
             // Keyboard hook covers Win+B/D only if RegisterHotKey failed for them.
             _keyboardHook = new LowLevelKeyboardHook();
             _keyboardHook.IgnoreBKey = _listenerWindow.IsBRegistered;
-            _keyboardHook.IgnoreDKey = _listenerWindow.IsDRegistered;
             _keyboardHook.FocusTrayRequested += OnFocusTrayRequested;
             _keyboardHook.ShowDesktopRequested += OnShowDesktopRequested;
             _keyboardHook.EscapeKeyDown += () => EscapeKeyDown?.Invoke();
@@ -66,6 +66,7 @@ namespace RetroBar.Utilities
 
         // State for Win+D foreground tracking across two consecutive presses
         private IntPtr _savedForeground = IntPtr.Zero;
+        private bool _savedForegroundWasMaximized = false;
         private bool _desktopShowing = false;
 
         private void OnFocusTrayRequested() =>
@@ -75,10 +76,16 @@ namespace RetroBar.Utilities
 
         internal void DoToggleDesktop()
         {
+            // Sometimes after win+d twice the wrong window gets the foreground window status.
+            // Builtin win+d has this problem too.
+            // This is to fix that.
+            // Actually this still doesn't always work.
+            
             IntPtr tray = WindowHelper.FindWindowsTray(IntPtr.Zero);
             if (!_desktopShowing)
             {
                 _savedForeground = GetForegroundWindow();
+                _savedForegroundWasMaximized = _savedForeground != IntPtr.Zero && IsZoomed(_savedForeground);
                 _desktopShowing = true;
                 SendMessage(tray, (int)WM.COMMAND, (IntPtr)TOGGLE_DESKTOP, IntPtr.Zero);
             }
@@ -110,11 +117,12 @@ namespace RetroBar.Utilities
                     //   Temporarily joins our dispatcher thread's input queue to the target window's
                     //   thread so that our SetForegroundWindow call is treated as coming from a thread
                     //   that already owns the foreground, which the OS unconditionally allows.
-                    var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
+                    bool wasMaximized = _savedForegroundWasMaximized;
+                    var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
                     timer.Tick += (_, _) =>
                     {
                         timer.Stop();
-                        ShowWindow(hwndToRestore, WindowShowStyle.Restore);
+                        ShowWindow(hwndToRestore, wasMaximized ? WindowShowStyle.ShowMaximized : WindowShowStyle.Restore);
 
                         // Tier 1: standard activation, works when AllowSetForegroundWindow succeeded.
                         if (SetForegroundWindow(hwndToRestore))
@@ -126,15 +134,20 @@ namespace RetroBar.Utilities
                         if (GetForegroundWindow() == hwndToRestore)
                             return;
 
-                        // Tier 3: attach our input queue to the target's thread so the OS treats
-                        // the subsequent SetForegroundWindow as coming from the foreground thread.
-                        uint targetTid = GetWindowThreadProcessId(hwndToRestore, out _);
+                        // Tier 3: attach our input queue to the thread that currently owns the
+                        // foreground lock (not hwndToRestore's thread, which doesn't have it) so
+                        // the OS treats the subsequent SetForegroundWindow as coming from a thread
+                        // that already owns the foreground, which it unconditionally allows.
+                        IntPtr currentForeground = GetForegroundWindow();
+                        uint foregroundTid = currentForeground != IntPtr.Zero
+                            ? GetWindowThreadProcessId(currentForeground, out _)
+                            : 0;
                         uint ourTid = GetCurrentThreadId();
-                        if (targetTid != 0 && targetTid != ourTid)
+                        if (foregroundTid != 0 && foregroundTid != ourTid)
                         {
-                            AttachThreadInput(ourTid, targetTid, true);
+                            AttachThreadInput(ourTid, foregroundTid, true);
                             SetForegroundWindow(hwndToRestore);
-                            AttachThreadInput(ourTid, targetTid, false);
+                            AttachThreadInput(ourTid, foregroundTid, false);
                         }
                     };
                     timer.Start();
@@ -187,8 +200,6 @@ namespace RetroBar.Utilities
         {
             internal bool IsNumberHotkeysRegistered => _registeredNumberHotkeys.Count > 0;
             internal bool IsBRegistered { get; private set; }
-            internal bool IsDRegistered { get; private set; }
-
             private const int HOTKEY_ID_FOCUS_TRAY = 20;
             private const int HOTKEY_ID_SHOW_DESKTOP = 21;
             private const int HOTKEY_ID_VDESK_SWITCH = 30; // +0..+8 for Win+F1..Win+F9
@@ -270,10 +281,9 @@ namespace RetroBar.Utilities
                     TryUnregisterFromProcess("ShellExperienceHost", VK.KEY_B);
                     TryUnregisterFromProcess("sihost", VK.KEY_B);
 
+                    RegisterWinKey(VK.KEY_D, HOTKEY_ID_SHOW_DESKTOP);
                     IsBRegistered = RegisterWinKey(VK.KEY_B, HOTKEY_ID_FOCUS_TRAY);
-                    IsDRegistered = RegisterWinKey(VK.KEY_D, HOTKEY_ID_SHOW_DESKTOP);
                     if (IsBRegistered) _registeredSystemHotkeys.Add(HOTKEY_ID_FOCUS_TRAY);
-                    if (IsDRegistered) _registeredSystemHotkeys.Add(HOTKEY_ID_SHOW_DESKTOP);
 
                 }
                 catch (Exception ex)
@@ -522,7 +532,6 @@ namespace RetroBar.Utilities
                     UnregisterHotKey(Handle, id);
                 _registeredSystemHotkeys.Clear();
                 IsBRegistered = false;
-                IsDRegistered = false;
             }
 
             public void UnregisterNumberHotkeys()
