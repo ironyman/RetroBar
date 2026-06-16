@@ -101,6 +101,7 @@ namespace RetroBar.Controls
             {
                 if (NotifyIconToggleButton.Visibility == Visibility.Visible)
                 {
+                    NotifyIconToggleButton.Tag = "HotkeyFocus";
                     NotifyIconToggleButton.Focus();
                     return;
                 }
@@ -260,10 +261,18 @@ namespace RetroBar.Controls
         private void NotifyIconList_Loaded(object sender, RoutedEventArgs e)
         {
             SetNotificationAreaCollections();
+
+            var window = Window.GetWindow(this);
+            window?.AddHandler(System.Windows.Input.Mouse.PreviewMouseDownEvent,
+                new System.Windows.Input.MouseButtonEventHandler(OnWindowPreviewMouseDown), true);
         }
 
         private void NotifyIconList_OnUnloaded(object sender, RoutedEventArgs e)
         {
+            var window = Window.GetWindow(this);
+            window?.RemoveHandler(System.Windows.Input.Mouse.PreviewMouseDownEvent,
+                new System.Windows.Input.MouseButtonEventHandler(OnWindowPreviewMouseDown));
+
             if (!_isLoaded) return;
 
             Settings.Instance.PropertyChanged -= Settings_PropertyChanged;
@@ -275,6 +284,13 @@ namespace RetroBar.Controls
                 ((INotifyCollectionChanged)_allUserIcons).CollectionChanged -= AllUserIcons_CollectionChanged;
 
             _isLoaded = false;
+        }
+
+        // Any mouse click anywhere suppresses the hotkey-only focus visual, mirroring
+        // WPF's normal "no focus rect after a mouse click" convention.
+        private void OnWindowPreviewMouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            NotifyIconToggleButton.Tag = null;
         }
 
         private void AllUserIcons_CollectionChanged(object sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
