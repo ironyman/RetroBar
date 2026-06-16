@@ -191,11 +191,9 @@ namespace RetroBar.Utilities
 
             private const int HOTKEY_ID_FOCUS_TRAY = 20;
             private const int HOTKEY_ID_SHOW_DESKTOP = 21;
-            private const int HOTKEY_ID_ABSORBER = 22;
             private const int HOTKEY_ID_VDESK_SWITCH = 30; // +0..+8 for Win+F1..Win+F9
             private const int HOTKEY_ID_VDESK_MOVE = 40;   // +0..+8 for Win+Shift+F1..Win+Shift+F9
             private const int VDESK_HOTKEY_COUNT = 9;
-            private const byte VK_F24 = 0x87;
 
             private readonly HotkeyManager _manager;
             private readonly HashSet<int> _registeredNumberHotkeys = [];
@@ -230,9 +228,6 @@ namespace RetroBar.Utilities
                         _manager.DoToggleDesktop();
                         return;
                     }
-
-                    if (hotkeyId == HOTKEY_ID_ABSORBER)
-                        return; // Win+F24 mask key — kernel dispatched WM_HOTKEY which suppresses Start menu; nothing else to do
 
                     if (hotkeyId >= HOTKEY_ID_VDESK_SWITCH && hotkeyId < HOTKEY_ID_VDESK_SWITCH + VDESK_HOTKEY_COUNT)
                     {
@@ -280,10 +275,6 @@ namespace RetroBar.Utilities
                     if (IsBRegistered) _registeredSystemHotkeys.Add(HOTKEY_ID_FOCUS_TRAY);
                     if (IsDRegistered) _registeredSystemHotkeys.Add(HOTKEY_ID_SHOW_DESKTOP);
 
-                    // Register Win+F24 so the kernel dispatches WM_HOTKEY when the hook injects F24
-                    // while Win is held, marking Win as "used as modifier" to suppress Start menu.
-                    if (RegisterHotKey(Handle, HOTKEY_ID_ABSORBER, (uint)(MOD.WIN | MOD.NOREPEAT), VK_F24))
-                        _registeredSystemHotkeys.Add(HOTKEY_ID_ABSORBER);
                 }
                 catch (Exception ex)
                 {

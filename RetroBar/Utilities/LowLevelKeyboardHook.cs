@@ -32,10 +32,12 @@ namespace RetroBar.Utilities
         private const int WM_SYSKEYUP = 0x0105;
         private const int VK_LWIN = 0x5B;
         private const int VK_RWIN = 0x5C;
-        // F24 (0x87) is used as the Start-menu mask key instead of VK_CONTROL to avoid
+        // F23 (0x86) is used as the Start-menu mask key instead of VK_CONTROL to avoid
         // triggering apps that react to Ctrl. F24 is registered with RegisterHotKey so the
         // kernel dispatches WM_HOTKEY for Win+F24, which marks Win as "used as a modifier".
-        private const byte VK_F24 = 0x87;
+        // https://learn.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes
+        // For some reason F24 doesn't work.
+        private const byte VK_F23 = 0x86;
         private const uint KEYEVENTF_KEYUP = 0x0002;
         private const uint LLKHF_INJECTED = 0x10;
 
@@ -146,17 +148,16 @@ namespace RetroBar.Utilities
                     if ((vk == VK_LWIN || vk == VK_RWIN) && !isInjected && _winChordIntercepted)
                     {
                         _winChordIntercepted = false;
-                        // AutoHotkey technique: inject mask key DOWN+UP synchronously — before
-                        // CallNextHookEx — so the OS sees Win+F24 while Win is still in "pending
-                        // release" state. The hook is called recursively for the injected event,
-                        // completing before Win UP passes through. Because Win+F24 is registered via
-                        // RegisterHotKey, the kernel dispatches WM_HOTKEY which marks Win as "used
-                        // as modifier", suppressing Start menu on the Win UP. F24 is used instead of
-                        // VK_CONTROL to avoid side-effects in apps that react to Win+Ctrl.
-                        keybd_event(VK_F24, 0, 0, UIntPtr.Zero);
-                        keybd_event(VK_F24, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
-                        // Fall through to CallNextHookEx — do NOT return 1 here.
-                        // Win UP must be passed through so Win key state is released properly.
+                        // Block the natural Win UP and inject a synthetic one.
+                        // Windows only opens Start menu on natural (non-injected) Win UP events,
+                        // so the synthetic replacement cleans up key state without triggering
+                        // the Start menu. The Win+F24 RegisterHotKey approach (which marks Win as
+                        // "used as modifier") is unreliable because Win+F24 may itself fail to
+                        // register on systems where another process owns it.
+                        // keybd_event((byte)vk, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+                        // return (IntPtr)1;
+                        keybd_event(VK_F23, 0, 0, UIntPtr.Zero);
+                        keybd_event(VK_F23, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
                     }
                 }
             }
