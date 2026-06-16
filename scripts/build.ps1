@@ -68,6 +68,11 @@
     Stop RetroBar (if running) and silently run the installed release uninstaller.
     Looks up the Inno Setup uninstall entry in HKCU (per-user install) then HKLM.
 
+.PARAMETER CheckCrash
+    Query the Windows Application event log for recent RetroBar crash events (Application Error
+    id=1000 and .NET Runtime id=1025) and print a summary. Exits with code 1 if any crash was
+    found in the last 24 hours, 0 otherwise.
+
 .PARAMETER Help
     Show this help message.
 
@@ -93,6 +98,7 @@
     .\build.ps1 -Install                       # stop RetroBar and silently install from bin\RetroBarInstaller.exe
     .\build.ps1 -Uninstall                     # stop RetroBar and silently uninstall the release build
     .\build.ps1 -UninstallRelease              # same as -Uninstall
+    .\build.ps1 -CheckCrash                    # check event log for recent RetroBar crashes
 #>
 param(
     [Parameter(Position = 0)]
@@ -121,6 +127,7 @@ param(
     [switch]$Install,
     [switch]$Uninstall,
     [switch]$UninstallRelease,
+    [switch]$CheckCrash,
     [switch]$Help,
 
     # Internal: passed by -Background to tell the spawned process to launch RetroBar after building.
@@ -392,6 +399,55 @@ function Invoke-Uninstall {
     Write-Host "Uninstall complete." -ForegroundColor Green
 }
 
+function Check-RetroBarCrashes {
+    param([int]$HoursBack = 24)
+
+    $since = (Get-Date).AddHours(-$HoursBack)
+
+    # Event IDs: 1000 = Application Error, 1025 = .NET Runtime FailFast/unhandled
+    $events = Get-WinEvent -LogName Application -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.TimeCreated -ge $since -and
+            $_.Id -in @(1000, 1025) -and
+            $_.Message -like '*RetroBar*'
+        } |
+        Sort-Object TimeCreated
+
+    if ($events.Count -eq 0) {
+        Write-Host "No RetroBar crash events found in the last $HoursBack hours." -ForegroundColor Green
+        return $false
+    }
+
+    Write-Host "`nFound $($events.Count) RetroBar crash event(s) in the last $HoursBack hours:" -ForegroundColor Red
+    foreach ($ev in $events) {
+        Write-Host "`n--- $($ev.TimeCreated)  ID=$($ev.Id)  [$($ev.ProviderName)] ---" -ForegroundColor Yellow
+        # Trim to first ~30 lines to avoid flooding the terminal
+        $lines = $ev.Message -split "`n" | Select-Object -First 30
+        Write-Host ($lines -join "`n")
+    }
+
+    # Also show WER dump locations from event 1001
+    $werEvents = Get-WinEvent -LogName Application -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.TimeCreated -ge $since -and
+            $_.Id -eq 1001 -and
+            $_.Message -like '*RetroBar*'
+        } |
+        Sort-Object TimeCreated -Descending |
+        Select-Object -First 5
+
+    if ($werEvents) {
+        Write-Host "`nWER report archives (contain crash dumps):" -ForegroundColor Cyan
+        foreach ($ev in $werEvents) {
+            $archiveLine = ($ev.Message -split "`n") | Where-Object { $_ -like '*ReportArchive*' } | Select-Object -First 1
+            if ($archiveLine) { Write-Host "  $($archiveLine.Trim())" }
+        }
+    }
+
+    Write-Host ""
+    return $true
+}
+
 # ---------------------------------------------------------------------------
 # Entry points
 # ---------------------------------------------------------------------------
@@ -399,6 +455,11 @@ function Invoke-Uninstall {
 if ($Help) {
     Get-Help $PSCommandPath -Detailed
     exit 0
+}
+
+if ($CheckCrash) {
+    $found = Check-RetroBarCrashes
+    exit ([int]$found)
 }
 
 if ($Paths) {
