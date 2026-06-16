@@ -376,23 +376,38 @@ namespace RetroBar
             var self = this;
             _foregroundHookProc = (hook, evt, fgHwnd, idObj, idChild, thread, time) =>
             {
-                if (fgHwnd == self.Handle) return;
+                bool menuOpen = self._openTrayContextMenu?.IsOpen == true;
+                ShellLogger.Debug($"Taskbar: FG hook fgHwnd=0x{fgHwnd:X} selfHwnd=0x{self.Handle:X} menuOpen={menuOpen}");
+
+                if (fgHwnd == self.Handle)
+                {
+                    ShellLogger.Debug("Taskbar: FG hook — fgHwnd is self, skipping");
+                    return;
+                }
 
                 // Don't clear focus or close menus if the new foreground is our own popup (e.g., context menu popup window)
                 IntPtr owner = NativeMethods.GetWindow(fgHwnd, NativeMethods.GetWindow_Cmd.GW_OWNER);
-                if (owner == self.Handle) return;
+                ShellLogger.Debug($"Taskbar: FG hook owner=0x{owner:X}");
+                if (owner == self.Handle)
+                {
+                    ShellLogger.Debug("Taskbar: FG hook — owner is self (our popup), skipping");
+                    return;
+                }
 
                 if (self.IsKeyboardFocusWithin)
                     self.Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Input,
                         new Action(self.ResetControlFocus));
 
                 // Close tray context menu when another window takes foreground
-                if (self._openTrayContextMenu?.IsOpen == true)
+                if (menuOpen)
+                {
+                    ShellLogger.Debug("Taskbar: FG hook — closing tray context menu");
                     self.Dispatcher.BeginInvoke(() =>
                     {
                         if (self._openTrayContextMenu?.IsOpen == true)
                             self._openTrayContextMenu.IsOpen = false;
                     });
+                }
             };
             _foregroundHook = NativeMethods.SetWinEventHook(
                 0x0003, 0x0003, // EVENT_SYSTEM_FOREGROUND
@@ -600,7 +615,16 @@ namespace RetroBar
         private void ContextMenu_Opened(object sender, RoutedEventArgs e)
         {
             if (sender is ContextMenu menu)
+            {
                 SetBtopMenuItemVisibility(menu);
+                _openTrayContextMenu = menu;
+
+                _trayContextMenuHook = new LowLevelMouseHook();
+                _trayContextMenuHook.LowLevelMouseEvent += OnTrayContextMenuMouseEvent;
+                _trayContextMenuHook.Initialize();
+
+                hotkeyManager.EscapeKeyDown += CloseTrayContextMenuOnEscape;
+            }
 
             if (_updater.IsUpdateAvailable)
             {

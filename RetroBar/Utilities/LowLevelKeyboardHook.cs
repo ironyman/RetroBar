@@ -108,16 +108,22 @@ namespace RetroBar.Utilities
                     }
                     if (!isInjected && IsWinKeyDown())
                     {
-                        if (vk == (uint)VK.KEY_B && !IgnoreBKey)
+                        if (vk == (uint)VK.KEY_B)
                         {
-                            FocusTrayRequested?.Invoke();
+                            // Always block so sihost's hook (earlier registration = later in LIFO
+                            // chain) never sees Win+B and cannot show its notification-area overlay.
+                            // Only fire the event when RegisterHotKey didn't succeed; otherwise
+                            // WM_HOTKEY delivers the action independently.
+                            if (!IgnoreBKey)
+                                FocusTrayRequested?.Invoke();
                             _blockNextBUp = true;
                             _winChordIntercepted = true;
                             return (IntPtr)1;
                         }
-                        if (vk == (uint)VK.KEY_D && !IgnoreDKey)
+                        if (vk == (uint)VK.KEY_D)
                         {
-                            ShowDesktopRequested?.Invoke();
+                            if (!IgnoreDKey)
+                                ShowDesktopRequested?.Invoke();
                             _blockNextDUp = true;
                             _winChordIntercepted = true;
                             return (IntPtr)1;
