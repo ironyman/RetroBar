@@ -186,6 +186,10 @@ namespace RetroBar
 
             ShellLogger.Error(msg, e.Exception);
 
+            string dumpPath = Utilities.MiniDumpHelper.Write();
+            if (dumpPath != null)
+                ShellLogger.Error($"Crash dump written to: {dumpPath}");
+
             string dMsg;
 
             if (msg.Length > 1000)

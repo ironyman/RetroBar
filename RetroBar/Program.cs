@@ -1,4 +1,6 @@
 ﻿using System;
+using ManagedShell.Common.Logging;
+using RetroBar.Utilities;
 
 namespace RetroBar
 {
@@ -16,6 +18,8 @@ namespace RetroBar
         [STAThread]
         public static int Main(string[] args)
         {
+            AppDomain.CurrentDomain.UnhandledException += OnUnhandledException;
+
             if (!SingleInstanceCheck())
             {
                 return 1;
@@ -25,6 +29,13 @@ namespace RetroBar
             app.InitializeComponent();
 
             return app.Run();
+        }
+
+        private static void OnUnhandledException(object sender, UnhandledExceptionEventArgs e)
+        {
+            string dumpPath = MiniDumpHelper.Write();
+            string location = dumpPath != null ? dumpPath : MiniDumpHelper.DumpDirectory;
+            ShellLogger.Error($"Unhandled exception on background thread — crash dump: {location}\n{e.ExceptionObject}");
         }
 
         private static bool GetMutex()
