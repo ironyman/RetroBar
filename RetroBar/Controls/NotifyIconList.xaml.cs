@@ -61,6 +61,21 @@ namespace RetroBar.Controls
             if (attached) AttachThreadInput(fgTid, myTid, false);
         }
 
+        private void NotifyIconList_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+        {
+            if (e.Key != System.Windows.Input.Key.Escape || _winBSavedForeground == IntPtr.Zero) return;
+
+            RestoreSavedForeground();
+            e.Handled = true;
+        }
+
+        private void RestoreSavedForeground()
+        {
+            var hwndToRestore = _winBSavedForeground;
+            _winBSavedForeground = IntPtr.Zero;
+            ForceForeground(hwndToRestore);
+        }
+
         private void OnFocusTrayHotkeyPressed(object sender, EventArgs e)
         {
             var window = Window.GetWindow(this);
@@ -74,9 +89,7 @@ namespace RetroBar.Controls
             if (currentFg == taskbarHwnd && _winBSavedForeground != IntPtr.Zero)
             {
                 // Taskbar already has focus — toggle back to the saved prior window.
-                var hwndToRestore = _winBSavedForeground;
-                _winBSavedForeground = IntPtr.Zero;
-                ForceForeground(hwndToRestore);
+                RestoreSavedForeground();
                 return;
             }
 

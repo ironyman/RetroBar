@@ -5,7 +5,8 @@
              xmlns:converters="clr-namespace:RetroBar.Converters"
              xmlns:dd="urn:gong-wpf-dragdrop"
              Loaded="NotifyIconList_Loaded"
-             Unloaded="NotifyIconList_OnUnloaded">
+             Unloaded="NotifyIconList_OnUnloaded"
+             PreviewKeyDown="NotifyIconList_PreviewKeyDown">
     <UserControl.Resources>
         <ResourceDictionary>
             <converters:EdgeOrientationConverter x:Key="edgeOrientationConverter" />
