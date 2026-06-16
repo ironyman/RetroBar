@@ -323,12 +323,28 @@ namespace RetroBar.Controls
                 _contextMenuHook = new LowLevelMouseHook();
                 _contextMenuHook.LowLevelMouseEvent += OnContextMenuMouseEvent;
                 _contextMenuHook.Initialize();
+
+                if (Host?.Host?.hotkeyManager is { } hm)
+                    hm.EscapeKeyDown += CloseContextMenuOnEscape;
             }
             else
             {
                 _contextMenuHook?.Dispose();
                 _contextMenuHook = null;
+
+                if (Host?.Host?.hotkeyManager is { } hm)
+                    hm.EscapeKeyDown -= CloseContextMenuOnEscape;
             }
+        }
+
+        private void CloseContextMenuOnEscape()
+        {
+            var menu = AppButton?.ContextMenu;
+            Dispatcher.BeginInvoke(() =>
+            {
+                if (menu?.IsOpen == true)
+                    menu.IsOpen = false;
+            });
         }
 
         private void OnContextMenuMouseEvent(object sender, LowLevelMouseHook.LowLevelMouseEventArgs args)

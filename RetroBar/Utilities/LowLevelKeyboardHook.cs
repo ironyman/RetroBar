@@ -51,6 +51,7 @@ namespace RetroBar.Utilities
 
         public event Action FocusTrayRequested;
         public event Action ShowDesktopRequested;
+        public event Action EscapeKeyDown;
 
         /// <summary>
         /// When true, Win+B is handled via RegisterHotKey and the hook should not intercept it.
@@ -101,6 +102,10 @@ namespace RetroBar.Utilities
 
                 if (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN)
                 {
+                    if (vk == (uint)VK.ESCAPE)
+                    {
+                        EscapeKeyDown?.Invoke();
+                    }
                     if (!isInjected && IsWinKeyDown())
                     {
                         if (vk == (uint)VK.KEY_B && !IgnoreBKey)

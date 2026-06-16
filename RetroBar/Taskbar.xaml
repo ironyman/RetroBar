@@ -30,6 +30,7 @@
             </MenuItem>
             <MenuItem x:Shared="false" x:Key="SetTimeMenuItem" Header="{DynamicResource set_time}" Click="SetTimeMenuItem_OnClick" FontWeight="{DynamicResource SetTimeMenuItemWeight}" />
             <MenuItem x:Shared="false" x:Key="CustomizeNotificationsMenuItem" Header="{DynamicResource customize_notifications_menu}" Click="CustomizeNotificationsMenuItem_OnClick" />
+            <MenuItem x:Shared="false" x:Key="BtopMenuItem" Header="btop" Tag="btop" Click="BtopMenuItem_OnClick" Visibility="Collapsed" />
             <MenuItem x:Shared="false" x:Key="TaskManagerMenuItem" Style="{DynamicResource TaskManMenuItem}" Click="TaskManagerMenuItem_OnClick" />
             <MenuItem x:Shared="false" x:Key="LockTaskbarMenuItem" Header="{DynamicResource lock_taskbar_menu}" IsCheckable="True" IsChecked="{Binding Source={x:Static utilities:Settings.Instance}, Path=LockTaskbar, UpdateSourceTrigger=PropertyChanged}" />
             <MenuItem x:Shared="false" x:Key="PropertiesMenuItem" Header="{DynamicResource tray_properties}" Click="PropertiesMenuItem_OnClick" />
@@ -89,12 +90,13 @@
             </controls:ShowDesktopButton>
             <GroupBox Style="{DynamicResource Tray}">
                 <GroupBox.ContextMenu>
-                    <ContextMenu>
+                    <ContextMenu Opened="TrayContextMenu_Opened" Closed="TrayContextMenu_Closed">
                         <!--StaticResourceExtension ResourceKey="ToolbarsItem" />
                         <Separator /-->
                         <StaticResourceExtension ResourceKey="SetTimeMenuItem" />
                         <StaticResourceExtension ResourceKey="CustomizeNotificationsMenuItem" />
                         <Separator />
+                        <StaticResourceExtension ResourceKey="BtopMenuItem" />
                         <StaticResourceExtension ResourceKey="TaskManagerMenuItem" />
                         <Separator />
                         <StaticResourceExtension ResourceKey="LockTaskbarMenuItem" />
@@ -140,6 +142,7 @@
             <!-- TODO: Add when desk bands and additional taskbars are supported. -->
             <!--StaticResourceExtension ResourceKey="ToolbarsItem" />
             <Separator /-->
+            <StaticResourceExtension ResourceKey="BtopMenuItem" />
             <StaticResourceExtension ResourceKey="TaskManagerMenuItem" />
             <Separator />
             <MenuItem x:Name="UpdateAvailableMenuItem"

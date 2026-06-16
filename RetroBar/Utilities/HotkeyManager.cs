@@ -55,6 +55,7 @@ namespace RetroBar.Utilities
             _keyboardHook.IgnoreDKey = _listenerWindow.IsDRegistered;
             _keyboardHook.FocusTrayRequested += OnFocusTrayRequested;
             _keyboardHook.ShowDesktopRequested += OnShowDesktopRequested;
+            _keyboardHook.EscapeKeyDown += () => EscapeKeyDown?.Invoke();
             _keyboardHook.Initialize();
 
             if (Settings.Instance.WinNumHotkeysAction != WinNumHotkeysOption.WindowsDefault)
@@ -168,6 +169,7 @@ namespace RetroBar.Utilities
 
         public event EventHandler<TaskbarHotkeyEventArgs> TaskbarHotkeyPressed;
         public event EventHandler FocusTrayHotkeyPressed;
+        public event Action EscapeKeyDown;
 
         private void Settings_PropertyChanged(object sender, System.ComponentModel.PropertyChangedEventArgs e)
         {

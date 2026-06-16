@@ -8,9 +8,11 @@ using RetroBar.Utilities;
 using System;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Interop;
 using Application = System.Windows.Application;
 
 namespace RetroBar
@@ -47,6 +49,24 @@ namespace RetroBar
 
         private IntPtr _foregroundHook = IntPtr.Zero;
         private NativeMethods.WinEventProc _foregroundHookProc; // field keeps delegate alive
+        private LowLevelMouseHook _trayContextMenuHook;
+        private ContextMenu _openTrayContextMenu;
+        private static readonly bool _btopAvailable = CheckBtopInPath();
+
+        private static bool CheckBtopInPath()
+        {
+            string pathEnv = Environment.GetEnvironmentVariable("PATH") ?? "";
+            foreach (string dir in pathEnv.Split(Path.PathSeparator))
+            {
+                try
+                {
+                    if (File.Exists(Path.Combine(dir.Trim(), "btop.exe")))
+                        return true;
+                }
+                catch { }
+            }
+            return false;
+        }
         
         public WindowManager windowManager;
         public HotkeyManager hotkeyManager;
@@ -356,9 +376,23 @@ namespace RetroBar
             var self = this;
             _foregroundHookProc = (hook, evt, fgHwnd, idObj, idChild, thread, time) =>
             {
-                if (fgHwnd != self.Handle && self.IsKeyboardFocusWithin)
+                if (fgHwnd == self.Handle) return;
+
+                // Don't clear focus or close menus if the new foreground is our own popup (e.g., context menu popup window)
+                IntPtr owner = NativeMethods.GetWindow(fgHwnd, NativeMethods.GetWindow_Cmd.GW_OWNER);
+                if (owner == self.Handle) return;
+
+                if (self.IsKeyboardFocusWithin)
                     self.Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Input,
                         new Action(self.ResetControlFocus));
+
+                // Close tray context menu when another window takes foreground
+                if (self._openTrayContextMenu?.IsOpen == true)
+                    self.Dispatcher.BeginInvoke(() =>
+                    {
+                        if (self._openTrayContextMenu?.IsOpen == true)
+                            self._openTrayContextMenu.IsOpen = false;
+                    });
             };
             _foregroundHook = NativeMethods.SetWinEventHook(
                 0x0003, 0x0003, // EVENT_SYSTEM_FOREGROUND
@@ -501,8 +535,73 @@ namespace RetroBar
         #endregion
 
         #region Context menu
+        private static void SetBtopMenuItemVisibility(ContextMenu menu)
+        {
+            foreach (var item in menu.Items)
+            {
+                if (item is MenuItem mi && mi.Tag as string == "btop")
+                    mi.Visibility = _btopAvailable ? Visibility.Visible : Visibility.Collapsed;
+            }
+        }
+
+        private void TrayContextMenu_Opened(object sender, RoutedEventArgs e)
+        {
+            if (sender is not ContextMenu menu) return;
+            SetBtopMenuItemVisibility(menu);
+            _openTrayContextMenu = menu;
+
+            _trayContextMenuHook = new LowLevelMouseHook();
+            _trayContextMenuHook.LowLevelMouseEvent += OnTrayContextMenuMouseEvent;
+            _trayContextMenuHook.Initialize();
+
+            hotkeyManager.EscapeKeyDown += CloseTrayContextMenuOnEscape;
+        }
+
+        private void OnTrayContextMenuMouseEvent(object sender, LowLevelMouseHook.LowLevelMouseEventArgs args)
+        {
+            if (args.Message != NativeMethods.WM.LBUTTONDOWN && args.Message != NativeMethods.WM.RBUTTONDOWN)
+                return;
+
+            var menu = _openTrayContextMenu;
+            if (menu == null || !menu.IsOpen) return;
+
+            try
+            {
+                if (PresentationSource.FromVisual(menu) is not HwndSource menuSource) return;
+
+                NativeMethods.GetWindowRect(menuSource.Handle, out NativeMethods.Rect rect);
+                var pt = args.HookStruct.pt;
+                bool inside = pt.X >= rect.Left && pt.X <= rect.Right && pt.Y >= rect.Top && pt.Y <= rect.Bottom;
+                if (!inside)
+                {
+                    Dispatcher.BeginInvoke(() => { if (menu.IsOpen) menu.IsOpen = false; });
+                }
+            }
+            catch { }
+        }
+
+        private void CloseTrayContextMenuOnEscape()
+        {
+            Dispatcher.BeginInvoke(() =>
+            {
+                if (_openTrayContextMenu?.IsOpen == true)
+                    _openTrayContextMenu.IsOpen = false;
+            });
+        }
+
+        private void TrayContextMenu_Closed(object sender, RoutedEventArgs e)
+        {
+            _trayContextMenuHook?.Dispose();
+            _trayContextMenuHook = null;
+            _openTrayContextMenu = null;
+            hotkeyManager.EscapeKeyDown -= CloseTrayContextMenuOnEscape;
+        }
+
         private void ContextMenu_Opened(object sender, RoutedEventArgs e)
         {
+            if (sender is ContextMenu menu)
+                SetBtopMenuItemVisibility(menu);
+
             if (_updater.IsUpdateAvailable)
             {
                 UpdateAvailableMenuItem.Visibility = Visibility.Visible;
@@ -518,6 +617,16 @@ namespace RetroBar
         {
             PropertiesWindow propWindow = PropertiesWindow.Open(_shellManager.NotificationArea, _dictionaryManager, Screen, DpiScale, Orientation == Orientation.Horizontal ? DesiredHeight : DesiredWidth);
             propWindow.OpenCustomizeNotifications();
+        }
+
+        private void BtopMenuItem_OnClick(object sender, RoutedEventArgs e)
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "conhost",
+                Arguments = "btop",
+                UseShellExecute = true
+            });
         }
 
         private void TaskManagerMenuItem_OnClick(object sender, RoutedEventArgs e)
