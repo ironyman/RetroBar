@@ -157,8 +157,6 @@ namespace RetroBar.Controls
         private void AppButton_OnContextMenuOpening(object sender, ContextMenuEventArgs e)
         {
             ShellLogger.Debug($"TaskButton: ContextMenuOpening for {Window?.Title}");
-            bool flyoutWasActive = ShellFlyoutHelper.IsShellFlyoutActive();
-            ShellLogger.Debug($"TaskButton: ShellFlyout was active={flyoutWasActive}, calling DismissIfActive");
             ShellFlyoutHelper.DismissIfActive();
             ShellLogger.Debug($"TaskButton: DismissIfActive returned, proceeding with context menu");
 

@@ -119,9 +119,7 @@ namespace RetroBar.Controls
         private void NotifyIcon_OnMouseDown(object sender, MouseButtonEventArgs e)
         {
             e.Handled = true;
-            // Right-click opens a native modal menu; don't block here waiting for flyout dismissal.
-            if (e.ChangedButton != MouseButton.Right)
-                ShellFlyoutHelper.DismissIfActive();
+            ShellFlyoutHelper.DismissIfActive();
             Host?.SetTrayHost();
             if (e.ChangedButton == MouseButton.Left)
             {
@@ -131,6 +129,8 @@ namespace RetroBar.Controls
             else
             {
                 TrayIcon?.IconMouseDown(e.ChangedButton, MouseHelper.GetCursorPositionParam(), System.Windows.Forms.SystemInformation.DoubleClickTime);
+                // IconMouseDown for right-click runs a native modal menu loop; restore WS_EX_NOACTIVATE now that it has returned.
+                Host?.RestoreNoActivate();
             }
         }
 

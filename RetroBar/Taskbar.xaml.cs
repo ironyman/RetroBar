@@ -43,6 +43,7 @@ namespace RetroBar
         private readonly Updater _updater;
         private bool _fullScreenSuppressed;
         private bool _userClickedRetroBar;
+        private bool _noActivateTemporarilyRemoved;
 
         private IntPtr _foregroundHook = IntPtr.Zero;
         private NativeMethods.WinEventProc _foregroundHookProc; // field keeps delegate alive
@@ -88,9 +89,42 @@ namespace RetroBar
 
             PropertyChanged += Taskbar_PropertyChanged;
             PreviewMouseDown += OnTaskbarPreviewMouseDownFullScreen;
+            PreviewMouseRightButtonDown += OnPreviewMouseRightButtonDown;
+            AddHandler(ContextMenu.ClosedEvent, new RoutedEventHandler(OnAnyContextMenuClosed));
 
             _startMenuMonitor.StartMenuVisibilityChanged += StartMenuMonitor_StartMenuVisibilityChanged;
             _shellManager.TasksService.WindowActivated += TasksService_WindowActivated;
+        }
+
+        private void OnPreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (Handle == IntPtr.Zero || !ShellFlyoutHelper.IsShellFlyoutActive()) return;
+
+            int exStyle = NativeMethods.GetWindowLong(Handle, NativeMethods.GWL_EXSTYLE);
+            NativeMethods.SetWindowLong(Handle, NativeMethods.GWL_EXSTYLE,
+                exStyle & ~(int)NativeMethods.ExtendedWindowStyles.WS_EX_NOACTIVATE);
+            NativeMethods.SetForegroundWindow(Handle);
+            _noActivateTemporarilyRemoved = true;
+            ShellLogger.Debug("Taskbar: PreviewMouseRightButtonDown stripped WS_EX_NOACTIVATE and claimed foreground");
+        }
+
+        private void OnAnyContextMenuClosed(object sender, RoutedEventArgs e)
+        {
+            RestoreNoActivate();
+        }
+
+        internal void RestoreNoActivate()
+        {
+            if (!_noActivateTemporarilyRemoved || Handle == IntPtr.Zero) return;
+            _noActivateTemporarilyRemoved = false;
+
+            int exStyle = NativeMethods.GetWindowLong(Handle, NativeMethods.GWL_EXSTYLE);
+            if ((exStyle & (int)NativeMethods.ExtendedWindowStyles.WS_EX_NOACTIVATE) == 0)
+            {
+                NativeMethods.SetWindowLong(Handle, NativeMethods.GWL_EXSTYLE,
+                    exStyle | (int)NativeMethods.ExtendedWindowStyles.WS_EX_NOACTIVATE);
+                ShellLogger.Debug("Taskbar: restored WS_EX_NOACTIVATE");
+            }
         }
 
         private void SetFullScreenSuppressed(bool suppressed)
