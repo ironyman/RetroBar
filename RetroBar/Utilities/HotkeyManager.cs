@@ -287,10 +287,11 @@ namespace RetroBar.Utilities
 
                     if (!IsBRegistered)
                     {
-                        // Last resort: sihost still owns Win+B. Kill it and race its respawn so we
-                        // can register before it does.
-                        ShellLogger.Info("HotkeyManager: Win+B still owned by sihost; racing its respawn");
-                        SihostRacer.StealWinBFromSihost(() =>
+                        // Last resort: something inside explorer.exe still owns Win+B and won't
+                        // release it via WMTRAY_UNREGISTERHOTKEY. Kill explorer, register while
+                        // nothing is alive to hold the hotkey, then relaunch it.
+                        ShellLogger.Info("HotkeyManager: Win+B still owned by explorer; killing and restarting it");
+                        ExplorerHotkeyStealer.StealWinBFromExplorer(() =>
                         {
                             IsBRegistered = RegisterWinKey(VK.KEY_B, HOTKEY_ID_FOCUS_TRAY);
                         });
