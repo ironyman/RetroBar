@@ -280,11 +280,23 @@ namespace RetroBar.Utilities
                     // Try to unregister it from there before calling RegisterHotKey.
                     TryUnregisterFromProcess("ShellExperienceHost", VK.KEY_B);
                     TryUnregisterFromProcess("sihost", VK.KEY_B);
+                    TryUnregisterFromProcess("explorer", VK.KEY_B);
 
                     RegisterWinKey(VK.KEY_D, HOTKEY_ID_SHOW_DESKTOP);
                     IsBRegistered = RegisterWinKey(VK.KEY_B, HOTKEY_ID_FOCUS_TRAY);
-                    if (IsBRegistered) _registeredSystemHotkeys.Add(HOTKEY_ID_FOCUS_TRAY);
 
+                    if (!IsBRegistered)
+                    {
+                        // Last resort: sihost still owns Win+B. Kill it and race its respawn so we
+                        // can register before it does.
+                        ShellLogger.Info("HotkeyManager: Win+B still owned by sihost; racing its respawn");
+                        SihostRacer.StealWinBFromSihost(() =>
+                        {
+                            IsBRegistered = RegisterWinKey(VK.KEY_B, HOTKEY_ID_FOCUS_TRAY);
+                        });
+                    }
+
+                    if (IsBRegistered) _registeredSystemHotkeys.Add(HOTKEY_ID_FOCUS_TRAY);
                 }
                 catch (Exception ex)
                 {

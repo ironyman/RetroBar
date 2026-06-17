@@ -13,6 +13,13 @@
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <Platforms>AnyCPU;x86;ARM64</Platforms>
     <LangVersion>12</LangVersion>
+
+    <!-- Selects how HotkeyManager races sihost.exe's respawn to steal Win+B (see SihostRacer.cs).
+         false (default): suspend-on-creation poll, no persistent system changes, best-effort.
+         true: deterministic Image File Execution Options debugger hijack; requires RetroBar to run
+               elevated and briefly installs an HKLM registry key for the duration of the race. -->
+    <SihostRaceIfeoDebugger>false</SihostRaceIfeoDebugger>
+    <DefineConstants Condition="'$(SihostRaceIfeoDebugger)' == 'true'">$(DefineConstants);SIHOST_RACE_IFEO_DEBUGGER</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>

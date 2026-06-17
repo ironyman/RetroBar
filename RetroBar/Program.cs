@@ -18,6 +18,13 @@ namespace RetroBar
         [STAThread]
         public static int Main(string[] args)
         {
+#if SIHOST_RACE_IFEO_DEBUGGER
+            if (args.Length > 0 && args[0] == SihostRacer.DebuggerStubArg)
+            {
+                return SihostRacer.RunDebuggerStub(args);
+            }
+#endif
+
             AppDomain.CurrentDomain.UnhandledException += OnUnhandledException;
 
             if (!SingleInstanceCheck())
