@@ -31,9 +31,15 @@ namespace RetroBar
         private readonly StartMenuMonitor _startMenuMonitor;
         private readonly Updater _updater;
         private readonly HotkeyManager _hotkeyManager;
+        private readonly EarlyWinBReservation _earlyWinBReservation;
 
         public App()
         {
+            // Reserve Win+B before anything else initializes, so that if explorer.exe needs to be
+            // killed and relaunched to free it, no Shell_TrayWnd (real or ManagedShell's fake one)
+            // exists yet and the relaunched explorer.exe correctly takes over as the desktop shell.
+            _earlyWinBReservation = new EarlyWinBReservation();
+
             _shellManager = SetupManagedShell();
             _shellManager.TasksService.WindowInsertionIndexProvider = (win, windows) =>
             {
@@ -45,7 +51,7 @@ namespace RetroBar
             _startMenuMonitor = new StartMenuMonitor(new AppVisibilityHelper(false));
             _dictionaryManager = new DictionaryManager();
             _updater = new Updater();
-            _hotkeyManager = new HotkeyManager();
+            _hotkeyManager = new HotkeyManager(_earlyWinBReservation);
 
             Settings.Instance.PropertyChanged += Settings_PropertyChanged;
         }

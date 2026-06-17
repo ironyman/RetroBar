@@ -10,7 +10,11 @@ namespace RetroBar.Utilities
     /// alive to hold it, then relaunching explorer.exe. Unlike sihost.exe, explorer.exe does not
     /// auto-restart when killed (TerminateProcess doesn't trigger its crash-recovery registration),
     /// so this is deterministic: once it has fully exited, nothing can be holding the hotkey, and we
-    /// control exactly when it comes back.
+    /// control exactly when it comes back. We have to do this for Win+B because explorer
+    /// doesn't release Win+B unlike the other hotkeys. We reserve at early init because if it restart
+    /// explorer after RetroBay tray Shell_TrayWnd registration, then explorer will launch with a new
+    /// browser instead of just launching as shell. When explorer starts without an existing Shell_Traywnd
+    /// then it launches as shell without explorer shell. 
     /// </summary>
     internal static class ExplorerHotkeyStealer
     {

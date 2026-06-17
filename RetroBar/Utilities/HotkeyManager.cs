@@ -18,12 +18,14 @@ namespace RetroBar.Utilities
         [DllImport("user32.dll")] private static extern bool IsZoomed(IntPtr hWnd);
 
         private readonly HotkeyListenerWindow _listenerWindow;
+        private readonly EarlyWinBReservation _earlyWinBReservation;
         private LowLevelKeyboardHook _keyboardHook;
         private const int TOGGLE_DESKTOP = 407;
 
-        public HotkeyManager()
+        public HotkeyManager(EarlyWinBReservation earlyWinBReservation = null)
         {
             _listenerWindow = new HotkeyListenerWindow(this);
+            _earlyWinBReservation = earlyWinBReservation;
 
             Settings.Instance.PropertyChanged += Settings_PropertyChanged;
 
@@ -45,6 +47,10 @@ namespace RetroBar.Utilities
         private void InitializeHotkeys()
         {
             ShellLogger.Info("HotkeyManager: Initializing hotkeys (deferred to application idle)");
+
+            // Release the early reservation right before registering for real, so the gap where
+            // nothing holds Win+B is as short as possible.
+            _earlyWinBReservation?.Release();
 
             // Register Win+B and Win+D via RegisterHotKey first (same mechanism as Win+1-9,
             // which suppresses the Start menu automatically when Win is used as a modifier).
@@ -278,9 +284,9 @@ namespace RetroBar.Utilities
 
                     // Win+B on Windows 11 is owned by ShellExperienceHost (not Explorer).
                     // Try to unregister it from there before calling RegisterHotKey.
-                    TryUnregisterFromProcess("ShellExperienceHost", VK.KEY_B);
-                    TryUnregisterFromProcess("sihost", VK.KEY_B);
-                    TryUnregisterFromProcess("explorer", VK.KEY_B);
+                    TraySoftUnregister.TryUnregisterFromProcess("ShellExperienceHost", VK.KEY_B);
+                    TraySoftUnregister.TryUnregisterFromProcess("sihost", VK.KEY_B);
+                    TraySoftUnregister.TryUnregisterFromProcess("explorer", VK.KEY_B);
 
                     RegisterWinKey(VK.KEY_D, HOTKEY_ID_SHOW_DESKTOP);
                     IsBRegistered = RegisterWinKey(VK.KEY_B, HOTKEY_ID_FOCUS_TRAY);
@@ -302,75 +308,6 @@ namespace RetroBar.Utilities
                 catch (Exception ex)
                 {
                     ShellLogger.Warning($"HotkeyManager: Exception during RegisterSystemHotkeys - {ex.Message}");
-                }
-            }
-
-            /// <summary>
-            /// Finds all windows belonging to the named process, reads its binary for the hotkey table,
-            /// and sends WMTRAY_UNREGISTERHOTKEY to each window for the matching entry.
-            /// This mirrors what WMTRAY_UNREGISTERHOTKEY does for Explorer, but targeting other shell processes.
-            /// </summary>
-            private void TryUnregisterFromProcess(string processName, VK key)
-            {
-                try
-                {
-                    // Collect one representative window handle per process instance (pid → hwnd)
-                    var processWindows = new Dictionary<uint, IntPtr>();
-                    var collectCallback = new CallBackPtr((hwnd, _) =>
-                    {
-                        GetWindowThreadProcessId(hwnd, out uint pid);
-                        if (!processWindows.ContainsKey(pid))
-                        {
-                            try
-                            {
-                                using var p = Process.GetProcessById((int)pid);
-                                if (p.ProcessName.Equals(processName, StringComparison.OrdinalIgnoreCase))
-                                    processWindows[pid] = hwnd;
-                            }
-                            catch { }
-                        }
-                        return true;
-                    });
-                    EnumWindows(collectCallback, 0);
-
-                    foreach (var kv in processWindows)
-                    {
-                        uint pid = kv.Key;
-                        IntPtr anyHwnd = kv.Value;
-
-                        List<TrayHotkey.Entry> table;
-                        try { table = TrayHotkey.BuildTable(anyHwnd); }
-                        catch { continue; }
-
-                        if (table.Count == 0)
-                        {
-                            ShellLogger.Debug($"HotkeyManager: {processName} hotkey table is empty");
-                            continue;
-                        }
-
-                        int idx = table.FindIndex(e => e.VirtualKey == (byte)key && (e.Modifier & (byte)MOD.WIN) != 0);
-                        if (idx < 0)
-                        {
-                            ShellLogger.Debug($"HotkeyManager: {key} not found in {processName} binary hotkey table");
-                            continue;
-                        }
-
-                        int hotkeyId = table[idx].Id;
-                        ShellLogger.Debug($"HotkeyManager: {key} found in {processName} binary at table ID={hotkeyId}; sending WMTRAY_UNREGISTERHOTKEY to all its windows");
-
-                        var sendCallback = new CallBackPtr((hwnd, _) =>
-                        {
-                            GetWindowThreadProcessId(hwnd, out uint windowPid);
-                            if (windowPid == pid)
-                                SendMessage(hwnd, WMTRAY_UNREGISTERHOTKEY, new IntPtr(hotkeyId), IntPtr.Zero);
-                            return true;
-                        });
-                        EnumWindows(sendCallback, 0);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    ShellLogger.Warning($"HotkeyManager: Exception unregistering {key} from {processName} - {ex.Message}");
                 }
             }
 
