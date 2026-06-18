@@ -22,6 +22,11 @@ namespace RetroBar.Utilities
         private LowLevelKeyboardHook _keyboardHook;
         private const int TOGGLE_DESKTOP = 407;
 
+        // TEMP DEBUG: set true to skip installing the WH_KEYBOARD_LL hook entirely, to test
+        // whether Win+B going unresponsive after long uptime is caused by the hook vs. the
+        // RegisterHotKey/WM_HOTKEY path.
+        private const bool DisableKeyboardHookForTesting = true;
+
         public HotkeyManager(EarlyWinBReservation earlyWinBReservation = null)
         {
             _listenerWindow = new HotkeyListenerWindow(this);
@@ -57,12 +62,19 @@ namespace RetroBar.Utilities
             _listenerWindow.RegisterSystemHotkeys();
 
             // Keyboard hook covers Win+B/D only if RegisterHotKey failed for them.
-            _keyboardHook = new LowLevelKeyboardHook();
-            _keyboardHook.IgnoreBKey = _listenerWindow.IsBRegistered;
-            _keyboardHook.FocusTrayRequested += OnFocusTrayRequested;
-            _keyboardHook.ShowDesktopRequested += OnShowDesktopRequested;
-            _keyboardHook.EscapeKeyDown += () => EscapeKeyDown?.Invoke();
-            _keyboardHook.Initialize();
+            if (!DisableKeyboardHookForTesting)
+            {
+                _keyboardHook = new LowLevelKeyboardHook();
+                _keyboardHook.IgnoreBKey = _listenerWindow.IsBRegistered;
+                _keyboardHook.FocusTrayRequested += OnFocusTrayRequested;
+                _keyboardHook.ShowDesktopRequested += OnShowDesktopRequested;
+                _keyboardHook.EscapeKeyDown += () => EscapeKeyDown?.Invoke();
+                _keyboardHook.Initialize();
+            }
+            else
+            {
+                ShellLogger.Warning("HotkeyManager: Keyboard hook disabled for testing (DisableKeyboardHookForTesting=true)");
+            }
 
             if (Settings.Instance.WinNumHotkeysAction != WinNumHotkeysOption.WindowsDefault)
                 _listenerWindow.RegisterNumberHotkeys();

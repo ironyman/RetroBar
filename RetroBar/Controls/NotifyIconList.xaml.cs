@@ -273,6 +273,9 @@ namespace RetroBar.Controls
             window?.RemoveHandler(System.Windows.Input.Mouse.PreviewMouseDownEvent,
                 new System.Windows.Input.MouseButtonEventHandler(OnWindowPreviewMouseDown));
 
+            if (Host?.hotkeyManager != null)
+                Host.hotkeyManager.FocusTrayHotkeyPressed -= OnFocusTrayHotkeyPressed;
+
             if (!_isLoaded) return;
 
             Settings.Instance.PropertyChanged -= Settings_PropertyChanged;
