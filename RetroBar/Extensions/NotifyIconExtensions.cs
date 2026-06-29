@@ -89,6 +89,57 @@ namespace RetroBar.Extensions
                 // Trigger a refresh of the collections
                 icon.OnPropertyChanged("IsPinned");
             }
+
+            // Keep the order lists consistent with the new behavior so the icon
+            // appears on the correct side of the separator in both collapsed and
+            // expanded views. This is a no-op when called from drag-commit code
+            // because drag-commit writes the order lists before calling SetBehavior.
+            SyncOrderListForBehavior(icon.Identifier, behavior);
+        }
+
+        private static void SyncOrderListForBehavior(string identifier, NotifyIconBehavior behavior)
+        {
+            var hideOrder = Settings.Instance.NotifyIconOrderHide;
+            var pinnedOrder = Settings.Instance.NotifyIconOrderPinned;
+            bool inHide = hideOrder.Contains(identifier);
+            bool inPinned = pinnedOrder.Contains(identifier);
+
+            if (behavior == NotifyIconBehavior.AlwaysShow)
+            {
+                if (!inPinned || inHide)
+                {
+                    var newHide = new List<string>(hideOrder);
+                    var newPinned = new List<string>(pinnedOrder);
+                    newHide.Remove(identifier);
+                    if (!newPinned.Contains(identifier)) newPinned.Add(identifier);
+                    Settings.Instance.NotifyIconOrderHide = newHide;
+                    Settings.Instance.NotifyIconOrderPinned = newPinned;
+                }
+            }
+            else if (behavior == NotifyIconBehavior.HideWhenInactive)
+            {
+                if (!inHide || inPinned)
+                {
+                    var newHide = new List<string>(hideOrder);
+                    var newPinned = new List<string>(pinnedOrder);
+                    newPinned.Remove(identifier);
+                    if (!newHide.Contains(identifier)) newHide.Add(identifier);
+                    Settings.Instance.NotifyIconOrderHide = newHide;
+                    Settings.Instance.NotifyIconOrderPinned = newPinned;
+                }
+            }
+            else // AlwaysHide or Remove — take it out of both lists
+            {
+                if (inHide || inPinned)
+                {
+                    var newHide = new List<string>(hideOrder);
+                    var newPinned = new List<string>(pinnedOrder);
+                    newHide.Remove(identifier);
+                    newPinned.Remove(identifier);
+                    Settings.Instance.NotifyIconOrderHide = newHide;
+                    Settings.Instance.NotifyIconOrderPinned = newPinned;
+                }
+            }
         }
 
         public static bool CanInvert(this NotifyIcon icon) {

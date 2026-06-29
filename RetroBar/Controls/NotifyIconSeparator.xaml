@@ -1,0 +1,23 @@
+<UserControl x:Class="RetroBar.Controls.NotifyIconSeparator"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid x:Name="SeparatorRoot"
+          Background="Transparent"
+          VerticalAlignment="Stretch"
+          MouseDown="Separator_OnMouseDown"
+          MouseUp="Separator_OnMouseUp"
+          PreviewMouseMove="Separator_OnPreviewMouseMove"
+          LostMouseCapture="Separator_OnLostMouseCapture">
+        <!-- Hidden image drives the container to the same size as other tray icons -->
+        <Image Style="{DynamicResource NotifyIcon}"
+               Visibility="Hidden"
+               IsHitTestVisible="False" />
+        <Rectangle Width="2"
+                   Fill="White"
+                   Opacity="0.75"
+                   Margin="0,4"
+                   VerticalAlignment="Stretch"
+                   HorizontalAlignment="Center"
+                   IsHitTestVisible="False" />
+    </Grid>
+</UserControl>

@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
@@ -6,11 +8,15 @@ using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
+using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Threading;
 using ManagedShell.Interop;
 using ManagedShell.WindowsTray;
 using RetroBar.Extensions;
 using RetroBar.Utilities;
+using TrayIcon = ManagedShell.WindowsTray.NotifyIcon;
 
 namespace RetroBar.Controls
 {
@@ -21,6 +27,7 @@ namespace RetroBar.Controls
         private ListCollectionView _allUserIcons;
         private ListCollectionView _pinnedUserIcons;
         private ObservableCollection<ManagedShell.WindowsTray.NotifyIcon> promotedIcons = [];
+        private ObservableCollection<object> _displayItems = [];
 
         public static DependencyProperty HostProperty = DependencyProperty.Register(
             nameof(Host), typeof(Taskbar), typeof(NotifyIconList),
@@ -125,22 +132,21 @@ namespace RetroBar.Controls
             set { SetValue(NotificationAreaProperty, value); }
         }
 
-        public NotifyIconDropHandler DropHandler { get; }
-
         public NotifyIconList()
         {
             InitializeComponent();
-            DropHandler = new NotifyIconDropHandler(this);
         }
 
         private void Settings_PropertyChanged(object sender, PropertyChangedEventArgs e)
         {
-            if (e.PropertyName == nameof(Settings.NotifyIconOrder) ||
+            if (e.PropertyName == nameof(Settings.NotifyIconOrderPinned) ||
+                e.PropertyName == nameof(Settings.NotifyIconOrderHide) ||
                 e.PropertyName == nameof(Settings.NotifyIconBehaviors))
             {
                 _allUserIcons?.Refresh();
                 _pinnedUserIcons?.Refresh();
                 SetToggleVisibility();
+                RebuildDisplayItems();
             }
             else if (e.PropertyName == nameof(Settings.CollapseNotifyIcons))
             {
@@ -153,7 +159,7 @@ namespace RetroBar.Controls
                 {
                     NotifyIconToggleButton.IsChecked = false;
                     NotifyIconToggleButton.Visibility = Visibility.Collapsed;
-                    NotifyIcons.ItemsSource = _allUserIcons;
+                    NotifyIcons.ItemsSource = _displayItems;
                 }
             }
             else if (e.PropertyName == nameof(Settings.InvertIconsMode) || e.PropertyName == nameof(Settings.InvertNotifyIcons))
@@ -162,7 +168,7 @@ namespace RetroBar.Controls
                 if (Settings.Instance.CollapseNotifyIcons && NotifyIconToggleButton.IsChecked != true)
                     NotifyIcons.ItemsSource = pinnedNotifyIconsSource.View;
                 else
-                    NotifyIcons.ItemsSource = _allUserIcons;
+                    NotifyIcons.ItemsSource = _displayItems;
             }
         }
 
@@ -171,11 +177,22 @@ namespace RetroBar.Controls
             if (!_isLoaded && NotificationArea != null)
             {
                 var trayIcons = (NotificationArea.PinnedIcons as ListCollectionView)?.SourceCollection as System.Collections.IList;
-                var comparer = new NotifyIconOrderComparer(trayIcons);
+
+                // Expanded view sorts by [hide-side icons, pinned-side icons].
+                var allComparer = new NotifyIconOrderComparer(trayIcons, () =>
+                {
+                    var combined = new List<string>(Settings.Instance.NotifyIconOrderHide);
+                    combined.AddRange(Settings.Instance.NotifyIconOrderPinned);
+                    return combined;
+                });
+
+                // Collapsed view sorts by pinned-side only.
+                var pinnedComparer = new NotifyIconOrderComparer(trayIcons,
+                    () => Settings.Instance.NotifyIconOrderPinned);
 
                 _allUserIcons = new ListCollectionView(trayIcons);
                 _allUserIcons.Filter = AllUserIconsFilter;
-                _allUserIcons.CustomSort = comparer;
+                _allUserIcons.CustomSort = allComparer;
                 var liveAll = _allUserIcons as ICollectionViewLiveShaping;
                 liveAll.IsLiveFiltering = true;
                 liveAll.LiveFilteringProperties.Add("IsHidden");
@@ -183,7 +200,7 @@ namespace RetroBar.Controls
 
                 _pinnedUserIcons = new ListCollectionView(trayIcons);
                 _pinnedUserIcons.Filter = PinnedUserIconsFilter;
-                _pinnedUserIcons.CustomSort = comparer;
+                _pinnedUserIcons.CustomSort = pinnedComparer;
                 var livePinned = _pinnedUserIcons as ICollectionViewLiveShaping;
                 livePinned.IsLiveFiltering = true;
                 livePinned.LiveFilteringProperties.Add("IsHidden");
@@ -198,6 +215,9 @@ namespace RetroBar.Controls
                 NotificationArea.NotificationBalloonShown += NotificationArea_NotificationBalloonShown;
                 Settings.Instance.PropertyChanged += Settings_PropertyChanged;
 
+                MigrateAndEnsureIconOrders();
+                RebuildDisplayItems();
+
                 if (Settings.Instance.CollapseNotifyIcons)
                 {
                     NotifyIcons.ItemsSource = pinnedNotifyIconsSource.View;
@@ -207,11 +227,58 @@ namespace RetroBar.Controls
                 }
                 else
                 {
-                    NotifyIcons.ItemsSource = _allUserIcons;
+                    NotifyIcons.ItemsSource = _displayItems;
                 }
 
                 _isLoaded = true;
             }
+        }
+
+        private void MigrateAndEnsureIconOrders()
+        {
+            var oldOrder = Settings.Instance.NotifyIconOrder;
+            if (oldOrder.Count > 0 &&
+                Settings.Instance.NotifyIconOrderPinned.Count == 0 &&
+                Settings.Instance.NotifyIconOrderHide.Count == 0)
+            {
+                int sepIdx = oldOrder.IndexOf(SeparatorPlaceholder.SentinelId);
+                if (sepIdx >= 0)
+                {
+                    Settings.Instance.NotifyIconOrderHide = oldOrder.Take(sepIdx).ToList();
+                    Settings.Instance.NotifyIconOrderPinned = oldOrder.Skip(sepIdx + 1).ToList();
+                }
+                else
+                {
+                    Settings.Instance.NotifyIconOrderPinned = new List<string>(oldOrder);
+                }
+                Settings.Instance.NotifyIconOrder = new List<string>();
+            }
+        }
+
+        private void RebuildDisplayItems()
+        {
+            _displayItems.Clear();
+
+            var hideOrder = Settings.Instance.NotifyIconOrderHide;
+
+            bool separatorAdded = false;
+            foreach (TrayIcon icon in _allUserIcons)
+            {
+                // Icons explicitly in the hide list go before the separator;
+                // everything else (pinned list or unknown) goes after it.
+                bool isHideSide = hideOrder.Contains(icon.Identifier);
+
+                if (!separatorAdded && !isHideSide)
+                {
+                    _displayItems.Add(SeparatorPlaceholder.Instance);
+                    separatorAdded = true;
+                }
+
+                _displayItems.Add(icon);
+            }
+
+            if (!separatorAdded)
+                _displayItems.Add(SeparatorPlaceholder.Instance);
         }
 
         private static void NotificationAreaChangedCallback(DependencyObject sender, DependencyPropertyChangedEventArgs e)
@@ -222,8 +289,20 @@ namespace RetroBar.Controls
 
         private bool AllUserIconsFilter(object obj)
         {
-            if (obj is ManagedShell.WindowsTray.NotifyIcon icon)
-                return !icon.IsSystemIcon() && !icon.IsHidden && icon.GetBehavior() != NotifyIconBehavior.Remove;
+            if (obj is TrayIcon icon)
+            {
+                if (icon.IsSystemIcon()) return false;
+                var behavior = icon.GetBehavior();
+                if (behavior == NotifyIconBehavior.Remove) return false;
+                if (behavior == NotifyIconBehavior.AlwaysHide) return false;
+                if (icon.IsHidden)
+                {
+                    // Show OS-hidden icons only when they have an explicit position in one of the order lists.
+                    return Settings.Instance.NotifyIconOrderHide.Contains(icon.Identifier) ||
+                           Settings.Instance.NotifyIconOrderPinned.Contains(icon.Identifier);
+                }
+                return true;
+            }
             return false;
         }
 
@@ -298,14 +377,18 @@ namespace RetroBar.Controls
 
         private void AllUserIcons_CollectionChanged(object sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
         {
-            Dispatcher.BeginInvoke(new Action(SetToggleVisibility));
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                SetToggleVisibility();
+                RebuildDisplayItems();
+            }));
         }
 
         private void NotifyIconToggleButton_OnClick(object sender, RoutedEventArgs e)
         {
             ShellFlyoutHelper.DismissIfActive();
             if (NotifyIconToggleButton.IsChecked == true)
-                NotifyIcons.ItemsSource = _allUserIcons;
+                NotifyIcons.ItemsSource = _displayItems;
             else
                 NotifyIcons.ItemsSource = pinnedNotifyIconsSource.View;
         }
@@ -328,5 +411,314 @@ namespace RetroBar.Controls
                 NotifyIconToggleButton.Visibility = Visibility.Visible;
             }
         }
+
+        #region Live drag reorder
+
+        private const double IconDragAnimationMs = 180;
+        private const double IconDragSnapMs = 200;
+
+        private bool _isIconDragging;
+        private ContentPresenter _iconDragContainer;
+        private WrapPanel _iconDragPanel;
+        private Point _iconDragStartPanelPoint;
+        private List<ContentPresenter> _iconDragContainers;
+        private List<Point> _iconDragSlots;
+        private List<Size> _iconDragSizes;
+        private int _iconDragFromIndex;
+        private int _iconDragToIndex;
+        private readonly Dictionary<ContentPresenter, Point> _iconDragSiblingTargets = new();
+        private TrayIcon _iconBeingDragged;
+
+        public bool IsDraggingIcon => _isIconDragging;
+
+        public void StartIconDrag(FrameworkElement draggedControl, MouseEventArgs e)
+        {
+            if (_isIconDragging || draggedControl == null || NotifyIcons.Items.Count < 2)
+                return;
+
+            _iconDragPanel = FindVisualChild<WrapPanel>(NotifyIcons);
+            if (_iconDragPanel == null)
+                return;
+
+            _iconDragContainers = new List<ContentPresenter>();
+            _iconDragSlots = new List<Point>();
+            _iconDragSizes = new List<Size>();
+            _iconDragFromIndex = -1;
+
+            for (int i = 0; i < NotifyIcons.Items.Count; i++)
+            {
+                if (NotifyIcons.ItemContainerGenerator.ContainerFromIndex(i) is not ContentPresenter cp)
+                    return;
+
+                cp.RenderTransform = null;
+                _iconDragContainers.Add(cp);
+                _iconDragSlots.Add(cp.TranslatePoint(new Point(0, 0), _iconDragPanel));
+                _iconDragSizes.Add(new Size(cp.ActualWidth, cp.ActualHeight));
+
+                if (ReferenceEquals(cp.DataContext, draggedControl.DataContext))
+                    _iconDragFromIndex = i;
+            }
+
+            if (_iconDragFromIndex < 0)
+                return;
+
+            _isIconDragging = true;
+            _iconBeingDragged = _iconDragContainers[_iconDragFromIndex].DataContext as TrayIcon;
+            _iconDragContainer = _iconDragContainers[_iconDragFromIndex];
+            _iconDragToIndex = _iconDragFromIndex;
+            _iconDragStartPanelPoint = e.GetPosition(_iconDragPanel);
+            _iconDragSiblingTargets.Clear();
+
+            Panel.SetZIndex(_iconDragContainer, 100);
+        }
+
+        public void UpdateIconDrag(MouseEventArgs e)
+        {
+            if (!_isIconDragging)
+                return;
+
+            bool horizontal = Host?.Orientation != System.Windows.Controls.Orientation.Vertical;
+            Vector delta = e.GetPosition(_iconDragPanel) - _iconDragStartPanelPoint;
+
+            var draggedTransform = GetIconTranslate(_iconDragContainer);
+            draggedTransform.BeginAnimation(TranslateTransform.XProperty, null);
+            draggedTransform.BeginAnimation(TranslateTransform.YProperty, null);
+            if (horizontal)
+            {
+                draggedTransform.X = delta.X;
+                draggedTransform.Y = 0;
+            }
+            else
+            {
+                draggedTransform.X = 0;
+                draggedTransform.Y = delta.Y;
+            }
+
+            double draggedCenter = IconMainCoord(_iconDragSlots[_iconDragFromIndex], horizontal)
+                                   + IconMainSize(_iconDragSizes[_iconDragFromIndex], horizontal) / 2
+                                   + (horizontal ? delta.X : delta.Y);
+            double half = IconMainSize(_iconDragSizes[_iconDragFromIndex], horizontal) / 2;
+
+            int to = _iconDragToIndex;
+            int count = _iconDragContainers.Count;
+            while (to < count - 1 && draggedCenter + half > IconSlotCenter(to + 1, horizontal)) to++;
+            while (to > 0 && draggedCenter - half < IconSlotCenter(to - 1, horizontal)) to--;
+
+            if (to != _iconDragToIndex)
+            {
+                _iconDragToIndex = to;
+                LayoutIconDragSiblings();
+            }
+        }
+
+        private double IconSlotCenter(int slot, bool horizontal)
+            => IconMainCoord(_iconDragSlots[slot], horizontal) + IconMainSize(_iconDragSizes[slot], horizontal) / 2;
+
+        public void EndIconDrag()
+        {
+            if (!_isIconDragging)
+                return;
+
+            _isIconDragging = false;
+
+            var taskbar = Window.GetWindow(this);
+            bool droppedOutside = taskbar != null && IsOutsideTaskbarWindow(taskbar);
+
+            Vector finalOffset = _iconDragSlots[_iconDragToIndex] - _iconDragSlots[_iconDragFromIndex];
+            var transform = GetIconTranslate(_iconDragContainer);
+            transform.BeginAnimation(TranslateTransform.XProperty, null);
+            transform.BeginAnimation(TranslateTransform.YProperty, null);
+
+            var ease = new SineEase { EasingMode = EasingMode.EaseOut };
+            var animX = new DoubleAnimation(transform.X, finalOffset.X, TimeSpan.FromMilliseconds(IconDragSnapMs)) { EasingFunction = ease };
+            var animY = new DoubleAnimation(transform.Y, finalOffset.Y, TimeSpan.FromMilliseconds(IconDragSnapMs)) { EasingFunction = ease };
+            animX.Completed += (_, _) => CommitIconDrag(droppedOutside);
+            transform.BeginAnimation(TranslateTransform.XProperty, animX);
+            transform.BeginAnimation(TranslateTransform.YProperty, animY);
+        }
+
+        private void LayoutIconDragSiblings()
+        {
+            var order = new List<int>(_iconDragContainers.Count);
+            for (int i = 0; i < _iconDragContainers.Count; i++)
+            {
+                if (i != _iconDragFromIndex) order.Add(i);
+            }
+            order.Insert(_iconDragToIndex, _iconDragFromIndex);
+
+            for (int pos = 0; pos < order.Count; pos++)
+            {
+                int idx = order[pos];
+                if (idx == _iconDragFromIndex) continue;
+
+                Vector offset = _iconDragSlots[pos] - _iconDragSlots[idx];
+                AnimateIconSibling(_iconDragContainers[idx], offset);
+            }
+        }
+
+        private void AnimateIconSibling(ContentPresenter cp, Vector offset)
+        {
+            Point target = new Point(offset.X, offset.Y);
+            if (_iconDragSiblingTargets.TryGetValue(cp, out Point current) && current == target)
+                return;
+
+            _iconDragSiblingTargets[cp] = target;
+
+            var transform = GetIconTranslate(cp);
+            var ease = new SineEase { EasingMode = EasingMode.EaseOut };
+            transform.BeginAnimation(TranslateTransform.XProperty,
+                new DoubleAnimation(offset.X, TimeSpan.FromMilliseconds(IconDragAnimationMs)) { EasingFunction = ease });
+            transform.BeginAnimation(TranslateTransform.YProperty,
+                new DoubleAnimation(offset.Y, TimeSpan.FromMilliseconds(IconDragAnimationMs)) { EasingFunction = ease });
+        }
+
+        private void CommitIconDrag(bool droppedOutside)
+        {
+            if (_iconDragContainers == null)
+                return;
+
+            int from = _iconDragFromIndex;
+            int to = _iconDragToIndex;
+            var draggedIcon = _iconBeingDragged;
+            bool isDraggingSeparator = _iconDragContainer.DataContext is SeparatorPlaceholder;
+
+            // Build the new visual order once — used in both branches below.
+            var order = new List<int>(_iconDragContainers.Count);
+            for (int i = 0; i < _iconDragContainers.Count; i++)
+                if (i != from) order.Add(i);
+            order.Insert(to, from);
+
+            // Locate the separator in the new visual order.
+            int sepContainerIdx = _iconDragContainers.FindIndex(cp => cp.DataContext is SeparatorPlaceholder);
+            int sepNewVisualPos = sepContainerIdx >= 0 ? order.IndexOf(sepContainerIdx) : -1;
+
+            if (droppedOutside && draggedIcon != null)
+            {
+                draggedIcon.SetBehavior(NotifyIconBehavior.HideWhenInactive);
+            }
+            else if (isDraggingSeparator)
+            {
+                // ── Separator was dragged ──────────────────────────────────────────
+                // Rebuild both lists from the new visual order, preserving the order
+                // of every icon that moved past the separator.
+                var newHideOrder = new List<string>();
+                var newPinnedOrder = new List<string>();
+                var toPin = new List<TrayIcon>();
+                var toUnpin = new List<TrayIcon>();
+
+                for (int pos = 0; pos < order.Count; pos++)
+                {
+                    if (_iconDragContainers[order[pos]].DataContext is not TrayIcon icon) continue;
+                    bool onPinnedSide = pos > to;
+                    if (onPinnedSide) newPinnedOrder.Add(icon.Identifier);
+                    else newHideOrder.Add(icon.Identifier);
+
+                    if (onPinnedSide && !icon.IsPinned) toPin.Add(icon);
+                    else if (!onPinnedSide && icon.IsPinned) toUnpin.Add(icon);
+                }
+
+                // Write orders first so any rebuild triggered by SetBehavior below
+                // already sees the correct new lists.
+                Settings.Instance.NotifyIconOrderHide = newHideOrder;
+                Settings.Instance.NotifyIconOrderPinned = newPinnedOrder;
+
+                foreach (var icon in toPin) icon.SetBehavior(NotifyIconBehavior.AlwaysShow);
+                foreach (var icon in toUnpin) icon.SetBehavior(NotifyIconBehavior.HideWhenInactive);
+            }
+            else if (to != from && draggedIcon != null)
+            {
+                // ── Regular icon was dragged ───────────────────────────────────────
+                string draggedId = draggedIcon.Identifier;
+                bool wasOnPinnedSide = Settings.Instance.NotifyIconOrderPinned.Contains(draggedId);
+                bool isNowOnPinnedSide = sepNewVisualPos >= 0 ? to > sepNewVisualPos : wasOnPinnedSide;
+
+                var hideOrder = new List<string>(Settings.Instance.NotifyIconOrderHide);
+                var pinnedOrder = new List<string>(Settings.Instance.NotifyIconOrderPinned);
+                var targetList = isNowOnPinnedSide ? pinnedOrder : hideOrder;
+
+                // Find the first icon after the drop point that already belongs to the target list;
+                // insert before it so the drop position is honoured within that list.
+                TrayIcon neighbor = null;
+                for (int pos = to + 1; pos < order.Count; pos++)
+                {
+                    if (_iconDragContainers[order[pos]].DataContext is TrayIcon ni &&
+                        targetList.Contains(ni.Identifier))
+                    { neighbor = ni; break; }
+                }
+
+                // Remove from whichever list currently holds the icon, then insert into target.
+                hideOrder.Remove(draggedId);
+                pinnedOrder.Remove(draggedId);
+
+                if (neighbor != null)
+                    targetList.Insert(targetList.IndexOf(neighbor.Identifier), draggedId);
+                else
+                    targetList.Add(draggedId);
+
+                Settings.Instance.NotifyIconOrderHide = hideOrder;
+                Settings.Instance.NotifyIconOrderPinned = pinnedOrder;
+
+                // Update pin state if the icon crossed the separator.
+                if (wasOnPinnedSide != isNowOnPinnedSide)
+                    draggedIcon.SetBehavior(isNowOnPinnedSide ? NotifyIconBehavior.AlwaysShow : NotifyIconBehavior.HideWhenInactive);
+            }
+
+            foreach (var cp in _iconDragContainers)
+            {
+                if (cp.RenderTransform is TranslateTransform t)
+                {
+                    t.BeginAnimation(TranslateTransform.XProperty, null);
+                    t.BeginAnimation(TranslateTransform.YProperty, null);
+                }
+                cp.RenderTransform = null;
+                Panel.SetZIndex(cp, 0);
+            }
+
+            _isIconDragging = false;
+            _iconDragContainer = null;
+            _iconDragContainers = null;
+            _iconDragSlots = null;
+            _iconDragSizes = null;
+            _iconDragPanel = null;
+            _iconDragSiblingTargets.Clear();
+            _iconBeingDragged = null;
+        }
+
+        private static bool IsOutsideTaskbarWindow(Window window)
+        {
+            var topLeft = window.PointToScreen(new Point(0, 0));
+            var bottomRight = window.PointToScreen(new Point(window.ActualWidth, window.ActualHeight));
+            var mousePos = System.Windows.Forms.Cursor.Position;
+
+            return mousePos.X < topLeft.X || mousePos.X > bottomRight.X
+                || mousePos.Y < topLeft.Y || mousePos.Y > bottomRight.Y;
+        }
+
+        private static T FindVisualChild<T>(DependencyObject parent) where T : DependencyObject
+        {
+            for (int i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
+            {
+                var child = VisualTreeHelper.GetChild(parent, i);
+                if (child is T match) return match;
+                var found = FindVisualChild<T>(child);
+                if (found != null) return found;
+            }
+            return null;
+        }
+
+        private static TranslateTransform GetIconTranslate(ContentPresenter cp)
+        {
+            if (cp.RenderTransform is TranslateTransform t)
+                return t;
+
+            var transform = new TranslateTransform();
+            cp.RenderTransform = transform;
+            return transform;
+        }
+
+        private static double IconMainCoord(Point p, bool horizontal) => horizontal ? p.X : p.Y;
+        private static double IconMainSize(Size s, bool horizontal) => horizontal ? s.Width : s.Height;
+
+        #endregion
     }
 }

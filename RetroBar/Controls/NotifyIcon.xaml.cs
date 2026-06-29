@@ -28,6 +28,17 @@ namespace RetroBar.Controls
             set { SetValue(HostProperty, value); }
         }
 
+        public static DependencyProperty NotifyIconListHostProperty = DependencyProperty.Register(nameof(NotifyIconListHost), typeof(NotifyIconList), typeof(NotifyIcon));
+
+        public NotifyIconList NotifyIconListHost
+        {
+            get { return (NotifyIconList)GetValue(NotifyIconListHostProperty); }
+            set { SetValue(NotifyIconListHostProperty, value); }
+        }
+
+        private bool _dragMouseDown;
+        private Point _dragStartPoint;
+
         public NotifyIcon()
         {
             InitializeComponent();
@@ -125,6 +136,8 @@ namespace RetroBar.Controls
             {
                 // Defer left mouse-down until mouse-up so it isn't sent spuriously at drag start
                 _pendingLeftMouseDown = true;
+                _dragMouseDown = true;
+                _dragStartPoint = e.GetPosition(NotifyIconBorder);
             }
             else
             {
@@ -134,23 +147,59 @@ namespace RetroBar.Controls
             }
         }
 
+        private void NotifyIcon_OnPreviewMouseMove(object sender, MouseEventArgs e)
+        {
+            if (NotifyIconListHost?.IsDraggingIcon == true)
+            {
+                NotifyIconListHost.UpdateIconDrag(e);
+                return;
+            }
+
+            if (!_dragMouseDown || e.LeftButton != MouseButtonState.Pressed)
+                return;
+
+            Vector moved = e.GetPosition(NotifyIconBorder) - _dragStartPoint;
+            if (Math.Abs(moved.X) >= SystemParameters.MinimumHorizontalDragDistance ||
+                Math.Abs(moved.Y) >= SystemParameters.MinimumVerticalDragDistance)
+            {
+                NotifyIconListHost?.StartIconDrag(this, e);
+                if (NotifyIconListHost?.IsDraggingIcon == true)
+                {
+                    NotifyIconBorder.CaptureMouse();
+                    _pendingLeftMouseDown = false;
+                }
+            }
+        }
+
         private void NotifyIcon_OnMouseUp(object sender, MouseButtonEventArgs e)
         {
             e.Handled = true;
+            _dragMouseDown = false;
+
+            if (NotifyIconListHost?.IsDraggingIcon == true)
+            {
+                NotifyIconListHost.EndIconDrag();
+                NotifyIconBorder.ReleaseMouseCapture();
+                _pendingLeftMouseDown = false;
+                return;
+            }
+
             if (e.ChangedButton == MouseButton.Left && _pendingLeftMouseDown)
             {
                 _pendingLeftMouseDown = false;
-                if (!NotifyIconDropHandler.IsDragging)
-                {
-                    TrayIcon?.IconMouseDown(MouseButton.Left, MouseHelper.GetCursorPositionParam(), System.Windows.Forms.SystemInformation.DoubleClickTime);
-                    TrayIcon?.IconMouseUp(MouseButton.Left, MouseHelper.GetCursorPositionParam(), System.Windows.Forms.SystemInformation.DoubleClickTime);
-                    return;
-                }
+                TrayIcon?.IconMouseDown(MouseButton.Left, MouseHelper.GetCursorPositionParam(), System.Windows.Forms.SystemInformation.DoubleClickTime);
+                TrayIcon?.IconMouseUp(MouseButton.Left, MouseHelper.GetCursorPositionParam(), System.Windows.Forms.SystemInformation.DoubleClickTime);
+                return;
             }
-            if (!NotifyIconDropHandler.IsDragging)
-            {
-                TrayIcon?.IconMouseUp(e.ChangedButton, MouseHelper.GetCursorPositionParam(), System.Windows.Forms.SystemInformation.DoubleClickTime);
-            }
+
+            TrayIcon?.IconMouseUp(e.ChangedButton, MouseHelper.GetCursorPositionParam(), System.Windows.Forms.SystemInformation.DoubleClickTime);
+        }
+
+        private void NotifyIcon_OnLostMouseCapture(object sender, MouseEventArgs e)
+        {
+            _dragMouseDown = false;
+            if (NotifyIconListHost?.IsDraggingIcon == true)
+                NotifyIconListHost.EndIconDrag();
         }
 
         private void NotifyIcon_OnMouseEnter(object sender, MouseEventArgs e)
@@ -178,7 +227,8 @@ namespace RetroBar.Controls
         private void NotifyIcon_OnMouseMove(object sender, MouseEventArgs e)
         {
             e.Handled = true;
-            TrayIcon?.IconMouseMove(MouseHelper.GetCursorPositionParam());
+            if (NotifyIconListHost?.IsDraggingIcon != true)
+                TrayIcon?.IconMouseMove(MouseHelper.GetCursorPositionParam());
         }
 
         private bool HandleNotificationIconMouseWheel(bool upOrDown)

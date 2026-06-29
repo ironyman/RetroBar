@@ -3,7 +3,6 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:local="clr-namespace:RetroBar.Controls"
              xmlns:converters="clr-namespace:RetroBar.Converters"
-             xmlns:dd="urn:gong-wpf-dragdrop"
              Loaded="NotifyIconList_Loaded"
              Unloaded="NotifyIconList_OnUnloaded"
              PreviewKeyDown="NotifyIconList_PreviewKeyDown">
@@ -11,6 +10,19 @@
         <ResourceDictionary>
             <converters:EdgeOrientationConverter x:Key="edgeOrientationConverter" />
             <converters:IconListOrientation x:Key="iconsOrientation" />
+            <local:TrayItemTemplateSelector x:Key="trayTemplateSelector">
+                <local:TrayItemTemplateSelector.IconTemplate>
+                    <DataTemplate>
+                        <local:NotifyIcon Host="{Binding RelativeSource={RelativeSource Mode=FindAncestor, AncestorType=Window}}"
+                                          NotifyIconListHost="{Binding RelativeSource={RelativeSource Mode=FindAncestor, AncestorType=local:NotifyIconList}}" />
+                    </DataTemplate>
+                </local:TrayItemTemplateSelector.IconTemplate>
+                <local:TrayItemTemplateSelector.SeparatorTemplate>
+                    <DataTemplate>
+                        <local:NotifyIconSeparator NotifyIconListHost="{Binding RelativeSource={RelativeSource Mode=FindAncestor, AncestorType=local:NotifyIconList}}" />
+                    </DataTemplate>
+                </local:TrayItemTemplateSelector.SeparatorTemplate>
+            </local:TrayItemTemplateSelector>
         </ResourceDictionary>
     </UserControl.Resources>
     <StackPanel>
@@ -26,10 +38,7 @@
         <ItemsControl x:Name="NotifyIcons"
                       Focusable="False"
                       Style="{DynamicResource NotifyIconItems}"
-                      dd:DragDrop.IsDragSource="True"
-                      dd:DragDrop.IsDropTarget="True"
-                      dd:DragDrop.DragHandler="{Binding RelativeSource={RelativeSource AncestorType=local:NotifyIconList}, Path=DropHandler}"
-                      dd:DragDrop.DropHandler="{Binding RelativeSource={RelativeSource AncestorType=local:NotifyIconList}, Path=DropHandler}">
+                      ItemTemplateSelector="{StaticResource trayTemplateSelector}">
             <ItemsControl.ItemsPanel>
                 <ItemsPanelTemplate>
                     <WrapPanel>
@@ -44,11 +53,6 @@
                     </WrapPanel>
                 </ItemsPanelTemplate>
             </ItemsControl.ItemsPanel>
-            <ItemsControl.ItemTemplate>
-                <ItemContainerTemplate>
-                    <local:NotifyIcon Host="{Binding RelativeSource={RelativeSource Mode=FindAncestor, AncestorType=Window}}"></local:NotifyIcon>
-                </ItemContainerTemplate>
-            </ItemsControl.ItemTemplate>
         </ItemsControl>
     </StackPanel>
 </UserControl>

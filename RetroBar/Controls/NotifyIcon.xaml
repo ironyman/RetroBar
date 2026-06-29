@@ -20,6 +20,8 @@
                 MouseEnter="NotifyIcon_OnMouseEnter"
                 MouseLeave="NotifyIcon_OnMouseLeave"
                 MouseMove="NotifyIcon_OnMouseMove"
+                PreviewMouseMove="NotifyIcon_OnPreviewMouseMove"
+                LostMouseCapture="NotifyIcon_OnLostMouseCapture"
                 PreviewMouseWheel="NotifyIcon_OnPreviewMouseWheel">
             <Border.Style>
                 <Style TargetType="Border">
@@ -34,6 +36,10 @@
                         </DataTrigger>
                         <DataTrigger Binding="{Binding Path=Title}" Value="">
                             <Setter Property="ToolTipService.IsEnabled" Value="False"/>
+                        </DataTrigger>
+                        <!-- Icons to the left of the separator are hidden; show them faded -->
+                        <DataTrigger Binding="{Binding IsHidden}" Value="True">
+                            <Setter Property="Opacity" Value="0.4"/>
                         </DataTrigger>
                     </Style.Triggers>
                 </Style>

@@ -190,11 +190,26 @@ namespace RetroBar.Utilities
             set => Set(ref _notifyIconBehaviors, value);
         }
 
+        // Migration-only: populated when loading a pre-split settings.json. Cleared after migration.
         private List<string> _notifyIconOrder = new List<string>();
         public List<string> NotifyIconOrder
         {
             get => _notifyIconOrder;
             set => Set(ref _notifyIconOrder, value);
+        }
+
+        private List<string> _notifyIconOrderPinned = new List<string>();
+        public List<string> NotifyIconOrderPinned
+        {
+            get => _notifyIconOrderPinned;
+            set => Set(ref _notifyIconOrderPinned, value);
+        }
+
+        private List<string> _notifyIconOrderHide = new List<string>();
+        public List<string> NotifyIconOrderHide
+        {
+            get => _notifyIconOrderHide;
+            set => Set(ref _notifyIconOrderHide, value);
         }
 
         private bool _allowFontSmoothing = true;
