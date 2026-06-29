@@ -35,6 +35,8 @@ namespace RetroBar.Controls
 
         private DelayedActivationHandler dragHandler;
         private bool _isLoaded;
+        private bool _dragMouseDown;
+        private Point _dragStartPoint;
         private LowLevelMouseHook _contextMenuHook;
 
         public TaskButton()
@@ -270,6 +272,64 @@ namespace RetroBar.Controls
             if (e.ChangedButton == MouseButton.Left)
             {
                 PressedWindowState = Window.State;
+                _dragMouseDown = true;
+                _dragStartPoint = e.GetPosition(this);
+            }
+        }
+
+        private void AppButton_OnPreviewMouseMove(object sender, MouseEventArgs e)
+        {
+            if (Host == null)
+            {
+                return;
+            }
+
+            if (Host.IsDraggingButton)
+            {
+                Host.UpdateButtonDrag(e);
+                return;
+            }
+
+            if (!_dragMouseDown || e.LeftButton != MouseButtonState.Pressed)
+            {
+                return;
+            }
+
+            Vector moved = e.GetPosition(this) - _dragStartPoint;
+            if (Math.Abs(moved.X) >= SystemParameters.MinimumHorizontalDragDistance ||
+                Math.Abs(moved.Y) >= SystemParameters.MinimumVerticalDragDistance)
+            {
+                Host.StartButtonDrag(this, e);
+            }
+        }
+
+        private void AppButton_OnPreviewMouseUp(object sender, MouseButtonEventArgs e)
+        {
+            if (e.ChangedButton != MouseButton.Left)
+            {
+                return;
+            }
+
+            _dragMouseDown = false;
+
+            if (Host?.IsDraggingButton == true)
+            {
+                // Suppress the click that would otherwise activate the window after a drag. End the
+                // drag directly (and release capture); EndButtonDrag is idempotent so the resulting
+                // LostMouseCapture is a harmless no-op.
+                e.Handled = true;
+                Host.EndButtonDrag();
+                AppButton.ReleaseMouseCapture();
+            }
+        }
+
+        private void AppButton_OnLostMouseCapture(object sender, MouseEventArgs e)
+        {
+            _dragMouseDown = false;
+
+            if (Host?.IsDraggingButton == true)
+            {
+                Host.EndButtonDrag();
             }
         }
 

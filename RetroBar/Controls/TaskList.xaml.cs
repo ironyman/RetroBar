@@ -4,10 +4,15 @@ using ManagedShell.Common.Helpers;
 using ManagedShell.Common.Logging;
 using RetroBar.Utilities;
 using System;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Threading;
 
 namespace RetroBar.Controls
@@ -309,5 +314,256 @@ namespace RetroBar.Controls
             }
             return null;
         }
+
+        #region Live drag reorder
+
+        // Windows 10-style live reordering: the dragged button tracks the cursor while the
+        // remaining buttons slide out of the way with fluid animations and the dragged button
+        // snaps into place on release.
+
+        private const double DragAnimationMs = 180;
+        private const double DragSnapMs = 200;
+
+        private bool _isDragging;
+        private ContentPresenter _dragContainer;
+        private WrapPanel _dragPanel;
+        private Point _dragStartPanelPoint;
+        private List<ContentPresenter> _dragContainers;
+        private List<Point> _dragSlots;
+        private List<Size> _dragSizes;
+        private int _dragFromIndex;
+        private int _dragToIndex;
+        private readonly Dictionary<ContentPresenter, Point> _dragSiblingTargets = new();
+
+        public bool IsDraggingButton => _isDragging;
+
+        public void StartButtonDrag(TaskButton button, MouseEventArgs e)
+        {
+            if (_isDragging || button == null || TasksList.Items.Count < 2)
+                return;
+
+            _dragPanel = FindItemsPanel<WrapPanel>(TasksList);
+            if (_dragPanel == null)
+                return;
+
+            // Snapshot the current containers and their stable (untransformed) layout slots.
+            _dragContainers = new List<ContentPresenter>();
+            _dragSlots = new List<Point>();
+            _dragSizes = new List<Size>();
+            _dragFromIndex = -1;
+
+            for (int i = 0; i < TasksList.Items.Count; i++)
+            {
+                if (TasksList.ItemContainerGenerator.ContainerFromIndex(i) is not ContentPresenter cp)
+                    return;
+
+                cp.RenderTransform = null;
+                _dragContainers.Add(cp);
+                _dragSlots.Add(cp.TranslatePoint(new Point(0, 0), _dragPanel));
+                _dragSizes.Add(new Size(cp.ActualWidth, cp.ActualHeight));
+
+                if (ReferenceEquals(cp.DataContext, button.DataContext))
+                    _dragFromIndex = i;
+            }
+
+            if (_dragFromIndex < 0)
+                return;
+
+            _isDragging = true;
+            _dragContainer = _dragContainers[_dragFromIndex];
+            _dragToIndex = _dragFromIndex;
+            _dragStartPanelPoint = e.GetPosition(_dragPanel);
+            _dragSiblingTargets.Clear();
+
+            // The button already holds mouse capture from its press, so cursor tracking and the
+            // capture-loss that ends the drag both flow through that existing capture.
+            Panel.SetZIndex(_dragContainer, 100);
+        }
+
+        public void UpdateButtonDrag(MouseEventArgs e)
+        {
+            if (!_isDragging)
+                return;
+
+            bool horizontal = Host?.Orientation != Orientation.Vertical;
+            Vector delta = e.GetPosition(_dragPanel) - _dragStartPanelPoint;
+
+            // Move the dragged button with the cursor along the main axis only.
+            var draggedTransform = GetTranslate(_dragContainer);
+            draggedTransform.BeginAnimation(TranslateTransform.XProperty, null);
+            draggedTransform.BeginAnimation(TranslateTransform.YProperty, null);
+            if (horizontal)
+            {
+                draggedTransform.X = delta.X;
+                draggedTransform.Y = 0;
+            }
+            else
+            {
+                draggedTransform.X = 0;
+                draggedTransform.Y = delta.Y;
+            }
+
+            // Step the gap one slot at a time. A swap triggers once the dragged button's leading
+            // edge (in the direction of travel) passes the midpoint of the neighbouring button as
+            // it is currently displayed, which is symmetric for both directions.
+            double draggedCenter = MainCoord(_dragSlots[_dragFromIndex], horizontal)
+                                   + MainSize(_dragSizes[_dragFromIndex], horizontal) / 2
+                                   + (horizontal ? delta.X : delta.Y);
+            double half = MainSize(_dragSizes[_dragFromIndex], horizontal) / 2;
+
+            int to = _dragToIndex;
+            int count = _dragContainers.Count;
+            while (to < count - 1 && draggedCenter + half > SlotCenter(to + 1, horizontal)) to++;
+            while (to > 0 && draggedCenter - half < SlotCenter(to - 1, horizontal)) to--;
+
+            if (to != _dragToIndex)
+            {
+                _dragToIndex = to;
+                LayoutDragSiblings();
+            }
+        }
+
+        private double SlotCenter(int slot, bool horizontal)
+            => MainCoord(_dragSlots[slot], horizontal) + MainSize(_dragSizes[slot], horizontal) / 2;
+
+        public void EndButtonDrag()
+        {
+            if (!_isDragging)
+                return;
+
+            // Stop tracking the cursor immediately so a stray mouse move during the settle
+            // animation can't restart UpdateButtonDrag and cancel the snap (leaving it stuck).
+            _isDragging = false;
+
+            Vector finalOffset = _dragSlots[_dragToIndex] - _dragSlots[_dragFromIndex];
+            var transform = GetTranslate(_dragContainer);
+            transform.BeginAnimation(TranslateTransform.XProperty, null);
+            transform.BeginAnimation(TranslateTransform.YProperty, null);
+
+            var ease = new SineEase { EasingMode = EasingMode.EaseOut };
+            var animX = new DoubleAnimation(transform.X, finalOffset.X, TimeSpan.FromMilliseconds(DragSnapMs)) { EasingFunction = ease };
+            var animY = new DoubleAnimation(transform.Y, finalOffset.Y, TimeSpan.FromMilliseconds(DragSnapMs)) { EasingFunction = ease };
+            animX.Completed += (_, _) => CommitDrag();
+            transform.BeginAnimation(TranslateTransform.XProperty, animX);
+            transform.BeginAnimation(TranslateTransform.YProperty, animY);
+        }
+
+        private void LayoutDragSiblings()
+        {
+            // Build the display order with the dragged item reinserted at the target index.
+            var order = new List<int>(_dragContainers.Count);
+            for (int i = 0; i < _dragContainers.Count; i++)
+            {
+                if (i != _dragFromIndex) order.Add(i);
+            }
+            order.Insert(_dragToIndex, _dragFromIndex);
+
+            for (int pos = 0; pos < order.Count; pos++)
+            {
+                int idx = order[pos];
+                if (idx == _dragFromIndex) continue; // dragged button follows the cursor
+
+                Vector offset = _dragSlots[pos] - _dragSlots[idx];
+                AnimateSibling(_dragContainers[idx], offset);
+            }
+        }
+
+        private void AnimateSibling(ContentPresenter cp, Vector offset)
+        {
+            Point target = new Point(offset.X, offset.Y);
+            if (_dragSiblingTargets.TryGetValue(cp, out Point current) && current == target)
+                return;
+
+            _dragSiblingTargets[cp] = target;
+
+            var transform = GetTranslate(cp);
+            var ease = new SineEase { EasingMode = EasingMode.EaseOut };
+            transform.BeginAnimation(TranslateTransform.XProperty,
+                new DoubleAnimation(offset.X, TimeSpan.FromMilliseconds(DragAnimationMs)) { EasingFunction = ease });
+            transform.BeginAnimation(TranslateTransform.YProperty,
+                new DoubleAnimation(offset.Y, TimeSpan.FromMilliseconds(DragAnimationMs)) { EasingFunction = ease });
+        }
+
+        private void CommitDrag()
+        {
+            if (_dragContainers == null)
+                return;
+
+            int from = _dragFromIndex;
+            int to = _dragToIndex;
+
+            if (to != from && taskbarItems?.SourceCollection is ObservableCollection<ApplicationWindow> source
+                && _dragContainer.DataContext is ApplicationWindow dragged)
+            {
+                // Determine the window the dragged button now precedes in the new visual order.
+                var order = new List<int>(_dragContainers.Count);
+                for (int i = 0; i < _dragContainers.Count; i++)
+                {
+                    if (i != from) order.Add(i);
+                }
+                order.Insert(to, from);
+
+                ApplicationWindow neighbor = null;
+                if (to + 1 < order.Count)
+                {
+                    neighbor = _dragContainers[order[to + 1]].DataContext as ApplicationWindow;
+                }
+
+                int srcFrom = source.IndexOf(dragged);
+                if (srcFrom >= 0)
+                {
+                    int srcTo;
+                    if (neighbor != null)
+                    {
+                        srcTo = source.IndexOf(neighbor);
+                        if (srcTo > srcFrom) srcTo--;
+                    }
+                    else
+                    {
+                        srcTo = source.Count - 1;
+                    }
+
+                    if (srcTo >= 0 && srcTo != srcFrom)
+                        source.Move(srcFrom, srcTo);
+                }
+            }
+
+            // Clear all transforms; the new layout already reflects the committed order so this
+            // happens in the same render pass as the collection move (no flicker).
+            foreach (var cp in _dragContainers)
+            {
+                if (cp.RenderTransform is TranslateTransform t)
+                {
+                    t.BeginAnimation(TranslateTransform.XProperty, null);
+                    t.BeginAnimation(TranslateTransform.YProperty, null);
+                }
+                cp.RenderTransform = null;
+                Panel.SetZIndex(cp, 0);
+            }
+
+            _isDragging = false;
+            _dragContainer = null;
+            _dragContainers = null;
+            _dragSlots = null;
+            _dragSizes = null;
+            _dragPanel = null;
+            _dragSiblingTargets.Clear();
+        }
+
+        private static TranslateTransform GetTranslate(ContentPresenter cp)
+        {
+            if (cp.RenderTransform is TranslateTransform t)
+                return t;
+
+            var transform = new TranslateTransform();
+            cp.RenderTransform = transform;
+            return transform;
+        }
+
+        private static double MainCoord(Point p, bool horizontal) => horizontal ? p.X : p.Y;
+
+        private static double MainSize(Size s, bool horizontal) => horizontal ? s.Width : s.Height;
+
+        #endregion
     }
 }
