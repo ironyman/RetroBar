@@ -87,7 +87,7 @@ namespace RetroBar.Utilities
             if (dropInfo.Data is TrayIcon draggedIcon)
             {
                 var order = new List<string>(Settings.Instance.NotifyIconOrder);
-                string draggedId = draggedIcon.Identifier;
+                string draggedId = draggedIcon.GetStableIdentifier();
 
                 if (!order.Contains(draggedId))
                     order.Add(draggedId);
@@ -95,7 +95,7 @@ namespace RetroBar.Utilities
 
                 if (dropInfo.TargetItem is TrayIcon targetIcon)
                 {
-                    string targetId = targetIcon.Identifier;
+                    string targetId = targetIcon.GetStableIdentifier();
                     if (!order.Contains(targetId))
                         order.Add(targetId);
 

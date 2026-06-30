@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using ManagedShell.WindowsTray;
+using RetroBar.Extensions;
 
 namespace RetroBar.Utilities
 {
@@ -19,8 +20,8 @@ namespace RetroBar.Utilities
         public int Compare(object x, object y)
         {
             var order = _getOrder();
-            int ia = x is NotifyIcon a ? order.IndexOf(a.Identifier) : -1;
-            int ib = y is NotifyIcon b ? order.IndexOf(b.Identifier) : -1;
+            int ia = x is NotifyIcon a ? order.IndexOf(a.GetStableIdentifier()) : -1;
+            int ib = y is NotifyIcon b ? order.IndexOf(b.GetStableIdentifier()) : -1;
 
             if (ia >= 0 && ib >= 0) return ia.CompareTo(ib);
             if (ia >= 0) return -1;

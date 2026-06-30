@@ -253,32 +253,60 @@ namespace RetroBar.Controls
                 }
                 Settings.Instance.NotifyIconOrder = new List<string>();
             }
+
+            // Older builds stored full identifiers that embedded the icon's title. Titles change
+            // at runtime (e.g. Steam's download progress), so those entries went stale and bred
+            // duplicates. Collapse every stored identifier to its stable form and de-duplicate.
+            Settings.Instance.NotifyIconOrderHide = StabilizeIdentifierList(Settings.Instance.NotifyIconOrderHide);
+            Settings.Instance.NotifyIconOrderPinned = StabilizeIdentifierList(Settings.Instance.NotifyIconOrderPinned);
+
+            var behaviors = Settings.Instance.NotifyIconBehaviors;
+            var seenBehaviors = new HashSet<string>();
+            var stableBehaviors = new List<NotifyIconBehaviorSetting>();
+            bool behaviorsChanged = false;
+            foreach (var setting in behaviors)
+            {
+                string stable = NotifyIconExtensions.ToStableIdentifier(setting.Identifier);
+                if (stable != setting.Identifier) behaviorsChanged = true;
+                if (!seenBehaviors.Add(stable)) { behaviorsChanged = true; continue; }
+                stableBehaviors.Add(new NotifyIconBehaviorSetting { Identifier = stable, Behavior = setting.Behavior });
+            }
+            if (behaviorsChanged)
+                Settings.Instance.NotifyIconBehaviors = stableBehaviors;
+        }
+
+        private static List<string> StabilizeIdentifierList(List<string> stored)
+        {
+            var seen = new HashSet<string>();
+            var result = new List<string>(stored.Count);
+            foreach (var entry in stored)
+            {
+                string stable = NotifyIconExtensions.ToStableIdentifier(entry);
+                if (seen.Add(stable)) result.Add(stable);
+            }
+            return result;
         }
 
         private void RebuildDisplayItems()
         {
             _displayItems.Clear();
 
-            var hideOrder = Settings.Instance.NotifyIconOrderHide;
-
-            bool separatorAdded = false;
+            // Two passes grouped by behavior: new icons not yet in any order list sort to the end
+            // of _allUserIcons, so a single-pass separator insertion would put them on the wrong
+            // side. HideWhenInactive icons go before the separator, everything else after.
             foreach (TrayIcon icon in _allUserIcons)
             {
-                // Icons explicitly in the hide list go before the separator;
-                // everything else (pinned list or unknown) goes after it.
-                bool isHideSide = hideOrder.Contains(icon.Identifier);
-
-                if (!separatorAdded && !isHideSide)
-                {
-                    _displayItems.Add(SeparatorPlaceholder.Instance);
-                    separatorAdded = true;
-                }
-
-                _displayItems.Add(icon);
+                if (icon.GetBehavior() == NotifyIconBehavior.HideWhenInactive)
+                    _displayItems.Add(icon);
             }
 
-            if (!separatorAdded)
-                _displayItems.Add(SeparatorPlaceholder.Instance);
+            _displayItems.Add(SeparatorPlaceholder.Instance);
+
+            foreach (TrayIcon icon in _allUserIcons)
+            {
+                if (icon.GetBehavior() != NotifyIconBehavior.HideWhenInactive)
+                    _displayItems.Add(icon);
+            }
         }
 
         private static void NotificationAreaChangedCallback(DependencyObject sender, DependencyPropertyChangedEventArgs e)
@@ -298,8 +326,9 @@ namespace RetroBar.Controls
                 if (icon.IsHidden)
                 {
                     // Show OS-hidden icons only when they have an explicit position in one of the order lists.
-                    return Settings.Instance.NotifyIconOrderHide.Contains(icon.Identifier) ||
-                           Settings.Instance.NotifyIconOrderPinned.Contains(icon.Identifier);
+                    string id = icon.GetStableIdentifier();
+                    return Settings.Instance.NotifyIconOrderHide.Contains(id) ||
+                           Settings.Instance.NotifyIconOrderPinned.Contains(id);
                 }
                 return true;
             }
@@ -610,8 +639,8 @@ namespace RetroBar.Controls
                 {
                     if (_iconDragContainers[order[pos]].DataContext is not TrayIcon icon) continue;
                     bool onPinnedSide = pos > to;
-                    if (onPinnedSide) newPinnedOrder.Add(icon.Identifier);
-                    else newHideOrder.Add(icon.Identifier);
+                    if (onPinnedSide) newPinnedOrder.Add(icon.GetStableIdentifier());
+                    else newHideOrder.Add(icon.GetStableIdentifier());
 
                     if (onPinnedSide && !icon.IsPinned) toPin.Add(icon);
                     else if (!onPinnedSide && icon.IsPinned) toUnpin.Add(icon);
@@ -628,7 +657,7 @@ namespace RetroBar.Controls
             else if (to != from && draggedIcon != null)
             {
                 // ── Regular icon was dragged ───────────────────────────────────────
-                string draggedId = draggedIcon.Identifier;
+                string draggedId = draggedIcon.GetStableIdentifier();
                 bool wasOnPinnedSide = Settings.Instance.NotifyIconOrderPinned.Contains(draggedId);
                 bool isNowOnPinnedSide = sepNewVisualPos >= 0 ? to > sepNewVisualPos : wasOnPinnedSide;
 
@@ -642,7 +671,7 @@ namespace RetroBar.Controls
                 for (int pos = to + 1; pos < order.Count; pos++)
                 {
                     if (_iconDragContainers[order[pos]].DataContext is TrayIcon ni &&
-                        targetList.Contains(ni.Identifier))
+                        targetList.Contains(ni.GetStableIdentifier()))
                     { neighbor = ni; break; }
                 }
 
@@ -651,7 +680,7 @@ namespace RetroBar.Controls
                 pinnedOrder.Remove(draggedId);
 
                 if (neighbor != null)
-                    targetList.Insert(targetList.IndexOf(neighbor.Identifier), draggedId);
+                    targetList.Insert(targetList.IndexOf(neighbor.GetStableIdentifier()), draggedId);
                 else
                     targetList.Add(draggedId);
 

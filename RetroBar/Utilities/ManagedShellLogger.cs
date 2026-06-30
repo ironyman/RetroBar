@@ -1,4 +1,4 @@
-﻿using ManagedShell.Common.Logging;
+using ManagedShell.Common.Logging;
 using ManagedShell.Common.Logging.Observers;
 using System;
 using System.IO;
@@ -29,8 +29,12 @@ namespace RetroBar.Utilities
 
         private void SetSeverity()
         {
+#if DEBUG
+            ShellLogger.Severity = LogSeverity.Debug;
+#else
             // Handle null settings instance in case of an error while initializing settings
             ShellLogger.Severity = Settings.Instance?.DebugLogging == true ? LogSeverity.Debug : LogSeverity.Info;
+#endif
         }
 
         private void SetupLogging()

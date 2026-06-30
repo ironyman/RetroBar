@@ -19,10 +19,31 @@ namespace RetroBar.Extensions
             return SystemIconGuids.Contains(icon.GUID.ToString());
         }
 
-        public static string GetInvertIdentifier(this NotifyIcon icon)
+        // A stable identifier for persistence. Unlike NotifyIcon.Identifier, this omits the
+        // icon's Title, which some apps (e.g. Steam showing download progress) mutate constantly.
+        // Using the title in stored order/behavior lists makes entries go stale the moment the
+        // tooltip changes, so we key off GUID or Path:UID instead — matching how ManagedShell
+        // matches pinned icons in IsEqualByIdentifier.
+        public static string GetStableIdentifier(this NotifyIcon icon)
         {
             if (icon.GUID != default) return icon.GUID.ToString();
             else return icon.Path + ":" + icon.UID.ToString();
+        }
+
+        // Reduces a stored (possibly title-bearing) identifier to its stable form so legacy
+        // settings can be migrated. GUID strings have no ':' and pass through unchanged; path
+        // identifiers are "drive:path:uid[:title]" — keep the first three segments.
+        public static string ToStableIdentifier(string storedIdentifier)
+        {
+            if (string.IsNullOrEmpty(storedIdentifier)) return storedIdentifier;
+            string[] parts = storedIdentifier.Split(new[] { ':' }, 4);
+            if (parts.Length < 3) return storedIdentifier;
+            return parts[0] + ":" + parts[1] + ":" + parts[2];
+        }
+
+        public static string GetInvertIdentifier(this NotifyIcon icon)
+        {
+            return icon.GetStableIdentifier();
         }
 
         public static NotifyIconBehavior GetBehavior(this NotifyIcon icon)
@@ -32,7 +53,8 @@ namespace RetroBar.Extensions
                 return NotifyIconBehavior.AlwaysShow;
             }
 
-            if (Settings.Instance.NotifyIconBehaviors.Find(setting => setting.Identifier == icon.Identifier) is NotifyIconBehaviorSetting iconSetting)
+            string identifier = icon.GetStableIdentifier();
+            if (Settings.Instance.NotifyIconBehaviors.Find(setting => setting.Identifier == identifier) is NotifyIconBehaviorSetting iconSetting)
             {
                 return iconSetting.Behavior;
             }
@@ -42,8 +64,9 @@ namespace RetroBar.Extensions
 
         public static void SetBehavior(this NotifyIcon icon, NotifyIconBehavior behavior)
         {
+            string identifier = icon.GetStableIdentifier();
             var settings = new List<NotifyIconBehaviorSetting>(Settings.Instance.NotifyIconBehaviors);
-            var currentSettingIndex = settings.FindIndex(setting => setting.Identifier == icon.Identifier);
+            var currentSettingIndex = settings.FindIndex(setting => setting.Identifier == identifier);
 
             if (currentSettingIndex >= 0)
             {
@@ -56,7 +79,7 @@ namespace RetroBar.Extensions
                 {
                     settings[currentSettingIndex] = new NotifyIconBehaviorSetting
                     {
-                        Identifier = icon.Identifier,
+                        Identifier = identifier,
                         Behavior = behavior
                     };
                 }
@@ -65,7 +88,7 @@ namespace RetroBar.Extensions
             {
                 settings.Add(new NotifyIconBehaviorSetting
                 {
-                    Identifier = icon.Identifier,
+                    Identifier = identifier,
                     Behavior = behavior
                 });
             }
@@ -94,7 +117,7 @@ namespace RetroBar.Extensions
             // appears on the correct side of the separator in both collapsed and
             // expanded views. This is a no-op when called from drag-commit code
             // because drag-commit writes the order lists before calling SetBehavior.
-            SyncOrderListForBehavior(icon.Identifier, behavior);
+            SyncOrderListForBehavior(identifier, behavior);
         }
 
         private static void SyncOrderListForBehavior(string identifier, NotifyIconBehavior behavior)
