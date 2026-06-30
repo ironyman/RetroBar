@@ -218,9 +218,42 @@ namespace RetroBar.Controls
         {
             SetTaskButtonWidth();
 
+            var action = e.Action;
+
+            // When a new window is inserted after its active parent (GroupAfterParent setting),
+            // make sure it doesn't land in the middle of the parent's task group.
+            if (action == System.Collections.Specialized.NotifyCollectionChangedAction.Add)
+            {
+                if (e.NewItems != null && taskbarItems?.SourceCollection is ObservableCollection<ApplicationWindow> source)
+                {
+                    foreach (ApplicationWindow newWindow in e.NewItems)
+                    {
+                        int insertedIdx = source.IndexOf(newWindow);
+                        if (insertedIdx < 1) continue;
+
+                        var prevWindow = source[insertedIdx - 1];
+                        var group = GetGroupForWindow(prevWindow);
+                        if (group == null) continue;
+
+                        // Find the last consecutive group member that follows the insertion point.
+                        int lastGroupIdx = -1;
+                        for (int i = insertedIdx + 1; i < source.Count; i++)
+                        {
+                            if (source[i] is ApplicationWindow w && group.Windows.Contains(w))
+                                lastGroupIdx = i;
+                            else
+                                break;
+                        }
+
+                        if (lastGroupIdx >= 0)
+                            source.Move(insertedIdx, lastGroupIdx);
+                    }
+                }
+                return;
+            }
+
             // ObservableCollection.Move raises CollectionChanged with Action=Move and OldItems set,
             // but the window is not gone — only clean up groups for actual removals.
-            var action = e.Action;
             if (action != System.Collections.Specialized.NotifyCollectionChangedAction.Remove &&
                 action != System.Collections.Specialized.NotifyCollectionChangedAction.Replace &&
                 action != System.Collections.Specialized.NotifyCollectionChangedAction.Reset)
