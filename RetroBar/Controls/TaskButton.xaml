@@ -13,41 +13,42 @@
         <converters:ToolTipPlacementConverter x:Key="toolTipPlacementConverter" />
         <converters:TaskLabelConverter x:Key="taskLabelConverter" />
     </UserControl.Resources>
-    <Button Name="AppButton"
-            Focusable="False"
-            Click="AppButton_OnClick"
-            MouseUp="AppButton_OnMouseUp"
-            PreviewMouseDown="AppButton_OnPreviewMouseDown"
-            PreviewMouseMove="AppButton_OnPreviewMouseMove"
-            PreviewMouseUp="AppButton_OnPreviewMouseUp"
-            LostMouseCapture="AppButton_OnLostMouseCapture"
-            ContextMenuOpening="AppButton_OnContextMenuOpening"
-            DragEnter="AppButton_OnDragEnter"
-            DragLeave="AppButton_OnDragLeave"
-            ToolTipService.ShowDuration="60000">
-        <Grid>
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="*" />
-            </Grid.ColumnDefinitions>
-            <Image Source="{Binding Path=Icon, Mode=OneWay}"
-                   Grid.Column="0"
-                   Style="{DynamicResource TaskIcon}" />
-            <Image Source="{Binding Path=OverlayIcon, Mode=OneWay}"
-                   Grid.Column="0"
-                   Style="{DynamicResource TaskOverlayIcon}"
-                   Visibility="{Binding Source={x:Static utilities:Settings.Instance}, Path=ShowTaskBadges, UpdateSourceTrigger=PropertyChanged, Converter={StaticResource boolToVisibilityConverter}}" />
-            <TextBlock Grid.Column="1"
-                       Style="{DynamicResource TaskLabel}">
-                <TextBlock.Text>
-                    <MultiBinding Converter="{StaticResource taskLabelConverter}">
-                        <Binding Path="Title" />
-                        <Binding Path="ProgressValue" />
-                        <Binding Path="ProgressState" />
-                    </MultiBinding>
-                </TextBlock.Text>
-            </TextBlock>
-        </Grid>
+    <Grid>
+        <Button Name="AppButton"
+                Focusable="False"
+                Click="AppButton_OnClick"
+                MouseUp="AppButton_OnMouseUp"
+                PreviewMouseDown="AppButton_OnPreviewMouseDown"
+                PreviewMouseMove="AppButton_OnPreviewMouseMove"
+                PreviewMouseUp="AppButton_OnPreviewMouseUp"
+                LostMouseCapture="AppButton_OnLostMouseCapture"
+                ContextMenuOpening="AppButton_OnContextMenuOpening"
+                DragEnter="AppButton_OnDragEnter"
+                DragLeave="AppButton_OnDragLeave"
+                ToolTipService.ShowDuration="60000">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Image Source="{Binding Path=Icon, Mode=OneWay}"
+                       Grid.Column="0"
+                       Style="{DynamicResource TaskIcon}" />
+                <Image Source="{Binding Path=OverlayIcon, Mode=OneWay}"
+                       Grid.Column="0"
+                       Style="{DynamicResource TaskOverlayIcon}"
+                       Visibility="{Binding Source={x:Static utilities:Settings.Instance}, Path=ShowTaskBadges, UpdateSourceTrigger=PropertyChanged, Converter={StaticResource boolToVisibilityConverter}}" />
+                <TextBlock Grid.Column="1"
+                           Style="{DynamicResource TaskLabel}">
+                    <TextBlock.Text>
+                        <MultiBinding Converter="{StaticResource taskLabelConverter}">
+                            <Binding Path="Title" />
+                            <Binding Path="ProgressValue" />
+                            <Binding Path="ProgressState" />
+                        </MultiBinding>
+                    </TextBlock.Text>
+                </TextBlock>
+            </Grid>
         <Button.ContextMenu>
             <ContextMenu Opened="ContextMenu_OpenedOrClosed"
                          Closed="ContextMenu_OpenedOrClosed">
@@ -87,6 +88,14 @@
                                    VerticalAlignment="Center" />
                     </MenuItem.Icon>
                 </MenuItem>
+                <MenuItem Header="{DynamicResource remove_from_group}"
+                          Click="RemoveFromGroupMenuItem_OnClick"
+                          Name="RemoveFromGroupMenuItem"
+                          Visibility="Collapsed" />
+                <MenuItem Header="{DynamicResource remove_group}"
+                          Click="RemoveGroupMenuItem_OnClick"
+                          Name="RemoveGroupMenuItem"
+                          Visibility="Collapsed" />
                 <Separator />
                 <MenuItem Header="{DynamicResource end_task}"
                           Click="EndTaskMenuItem_OnClick"
@@ -160,4 +169,12 @@
             </ToolTip>
         </Button.ToolTip>
     </Button>
+    <Border x:Name="GroupIndicatorRect"
+            BorderThickness="0,2,0,0"
+            BorderBrush="Transparent"
+            VerticalAlignment="Top"
+            HorizontalAlignment="Stretch"
+            IsHitTestVisible="False"
+            Panel.ZIndex="10" />
+</Grid>
 </UserControl>

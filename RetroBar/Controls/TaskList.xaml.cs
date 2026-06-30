@@ -1,4 +1,4 @@
-﻿using ManagedShell.AppBar;
+using ManagedShell.AppBar;
 using ManagedShell.WindowsTasks;
 using ManagedShell.Common.Helpers;
 using ManagedShell.Common.Logging;
@@ -217,6 +217,45 @@ namespace RetroBar.Controls
         private void GroupedWindows_CollectionChanged(object sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
         {
             SetTaskButtonWidth();
+
+            // ObservableCollection.Move raises CollectionChanged with Action=Move and OldItems set,
+            // but the window is not gone — only clean up groups for actual removals.
+            var action = e.Action;
+            if (action != System.Collections.Specialized.NotifyCollectionChangedAction.Remove &&
+                action != System.Collections.Specialized.NotifyCollectionChangedAction.Replace &&
+                action != System.Collections.Specialized.NotifyCollectionChangedAction.Reset)
+                return;
+
+            bool changed = false;
+            if (e.OldItems != null)
+            {
+                foreach (ApplicationWindow window in e.OldItems)
+                {
+                    var group = GetGroupForWindow(window);
+                    if (group == null) continue;
+                    group.Windows.Remove(window);
+                    if (group.Windows.Count <= 1)
+                        _taskGroups.Remove(group);
+                    changed = true;
+                }
+            }
+            else if (action == System.Collections.Specialized.NotifyCollectionChangedAction.Reset)
+            {
+                // Full reset — dissolve all groups whose members are no longer in the source.
+                if (taskbarItems?.SourceCollection is System.Collections.IEnumerable src)
+                {
+                    var remaining = new HashSet<ApplicationWindow>(src.OfType<ApplicationWindow>());
+                    foreach (var g in _taskGroups.ToList())
+                    {
+                        g.Windows.RemoveAll(w => !remaining.Contains(w));
+                        if (g.Windows.Count <= 1) _taskGroups.Remove(g);
+                    }
+                }
+                changed = true;
+            }
+
+            if (changed)
+                Dispatcher.BeginInvoke(DispatcherPriority.Loaded, (Action)ApplyGroupVisuals);
         }
 
         private void TaskList_OnSizeChanged(object sender, SizeChangedEventArgs e)
@@ -315,6 +354,269 @@ namespace RetroBar.Controls
             return null;
         }
 
+        #region Task groups
+
+        private readonly List<TaskGroup> _taskGroups = new List<TaskGroup>();
+
+        // During-drag provisional group (shown as stripe preview; committed on mouse release).
+        private DispatcherTimer _groupHoverTimer;
+        private int _groupHoverTargetIndex = -1;
+        private bool _groupHoverConfirmed;
+        private TaskGroup _provisionalGroup;
+        private const double GroupHoverMs = 300;
+
+        private TaskGroup GetGroupForWindow(ApplicationWindow window)
+            => _taskGroups.FirstOrDefault(g => g.Windows.Contains(window));
+
+        private static TaskButton GetTaskButton(ContentPresenter cp)
+        {
+            if (cp == null || VisualTreeHelper.GetChildrenCount(cp) == 0) return null;
+            return VisualTreeHelper.GetChild(cp, 0) as TaskButton;
+        }
+
+        // Schedules a visual refresh on the next layout pass so containers are ready.
+        private void UpdateGroupVisuals()
+            => Dispatcher.BeginInvoke(DispatcherPriority.Loaded, (Action)ApplyGroupVisuals);
+
+        private void ApplyGroupVisuals()
+        {
+            for (int i = 0; i < TasksList.Items.Count; i++)
+            {
+                if (TasksList.ItemContainerGenerator.ContainerFromIndex(i) is not ContentPresenter cp) continue;
+                var btn = GetTaskButton(cp);
+                if (btn == null) continue;
+                var window = cp.DataContext as ApplicationWindow;
+                if (window == null) continue;
+
+                var group = GetGroupForWindow(window);
+                if (group != null)
+                {
+                    btn.SetGroupColor(group.GroupColor);
+                    continue;
+                }
+
+                if (_provisionalGroup?.Windows.Contains(window) == true)
+                {
+                    btn.SetGroupColor(_provisionalGroup.GroupColor);
+                    continue;
+                }
+
+                btn.SetGroupColor(null);
+            }
+        }
+
+        // Called by TaskButton.Loaded so new buttons pick up their group color.
+        public void RefreshGroupVisual(TaskButton btn)
+        {
+            if (btn?.DataContext is not ApplicationWindow window) return;
+            var group = GetGroupForWindow(window);
+            if (group != null)
+                btn.SetGroupColor(group.GroupColor);
+            else if (_provisionalGroup?.Windows.Contains(window) == true)
+                btn.SetGroupColor(_provisionalGroup.GroupColor);
+            else
+                btn.SetGroupColor(null);
+        }
+
+        // Called from TaskButton right-click → Remove from group.
+        public void UngroupWindow(ApplicationWindow window)
+        {
+            if (window == null) return;
+            var group = GetGroupForWindow(window);
+            if (group == null) return;
+
+            group.Windows.Remove(window);
+
+            if (taskbarItems?.SourceCollection is ObservableCollection<ApplicationWindow> source)
+            {
+                int windowPos = source.IndexOf(window);
+                if (windowPos >= 0 && group.Windows.Count > 0)
+                {
+                    // Find the span of remaining group members in collection order.
+                    var groupPositions = group.Windows
+                        .Select(w => source.IndexOf(w))
+                        .Where(idx => idx >= 0)
+                        .OrderBy(idx => idx)
+                        .ToList();
+
+                    if (groupPositions.Count > 0)
+                    {
+                        int firstGroupIdx = groupPositions[0];
+                        int lastGroupIdx = groupPositions[groupPositions.Count - 1];
+
+                        // Place before or after the group based on which end is closer.
+                        bool placeBeforeGroup = Math.Abs(windowPos - firstGroupIdx) <= Math.Abs(windowPos - lastGroupIdx);
+
+                        int targetPos;
+                        if (placeBeforeGroup)
+                        {
+                            // Insert before the first group member.
+                            // After removing windowPos, firstGroupIdx shifts down if windowPos < it.
+                            targetPos = windowPos < firstGroupIdx ? firstGroupIdx - 1 : firstGroupIdx;
+                        }
+                        else
+                        {
+                            // Insert after the last group member.
+                            // After removing windowPos, lastGroupIdx shifts down if windowPos < it.
+                            targetPos = windowPos < lastGroupIdx ? lastGroupIdx : lastGroupIdx + 1;
+                        }
+
+                        targetPos = Math.Max(0, Math.Min(targetPos, source.Count - 1));
+                        if (targetPos != windowPos)
+                            source.Move(windowPos, targetPos);
+                    }
+                }
+            }
+
+            if (group.Windows.Count <= 1)
+                _taskGroups.Remove(group);
+
+            UpdateGroupVisuals();
+        }
+
+        // Called from TaskButton right-click → Remove group.
+        // Dissolves group membership for all windows without repositioning them.
+        public void RemoveGroup(ApplicationWindow window)
+        {
+            if (window == null) return;
+            var group = GetGroupForWindow(window);
+            if (group == null) return;
+            _taskGroups.Remove(group);
+            UpdateGroupVisuals();
+        }
+
+        private void StartGroupHover(int targetIndex)
+        {
+            _groupHoverTargetIndex = targetIndex;
+            _groupHoverTimer?.Stop();
+            _groupHoverTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(GroupHoverMs) };
+            _groupHoverTimer.Tick += (_, _) => OnGroupHoverConfirmed();
+            _groupHoverTimer.Start();
+        }
+
+        private void CancelGroupHover()
+        {
+            _groupHoverTimer?.Stop();
+            _groupHoverTimer = null;
+
+            if (_groupHoverConfirmed)
+            {
+                _groupHoverConfirmed = false;
+                _provisionalGroup = null;
+                ApplyGroupVisuals();
+            }
+
+            _groupHoverTargetIndex = -1;
+        }
+
+        private void OnGroupHoverConfirmed()
+        {
+            _groupHoverTimer?.Stop();
+            _groupHoverTimer = null;
+
+            if (!_isDragging || _groupHoverTargetIndex < 0 || _dragContainer == null) return;
+
+            var draggedWindow = _dragContainer.DataContext as ApplicationWindow;
+            if (_groupHoverTargetIndex >= _dragContainers.Count) return;
+            var targetWindow = _dragContainers[_groupHoverTargetIndex].DataContext as ApplicationWindow;
+            if (draggedWindow == null || targetWindow == null) return;
+
+            var draggedGroup = GetGroupForWindow(draggedWindow);
+            var targetGroup = GetGroupForWindow(targetWindow);
+
+            // Pick the color from whichever side already has a group; otherwise random.
+            Color color = (targetGroup ?? draggedGroup)?.GroupColor ?? TaskGroup.RandomColor();
+
+            _provisionalGroup = new TaskGroup(color);
+
+            // Merge both sides into the provisional display set.
+            if (draggedGroup != null)
+                foreach (var w in draggedGroup.Windows) _provisionalGroup.Windows.Add(w);
+            else
+                _provisionalGroup.Windows.Add(draggedWindow);
+
+            if (targetGroup != null)
+            {
+                foreach (var w in targetGroup.Windows)
+                    if (!_provisionalGroup.Windows.Contains(w)) _provisionalGroup.Windows.Add(w);
+            }
+            else
+            {
+                if (!_provisionalGroup.Windows.Contains(targetWindow))
+                    _provisionalGroup.Windows.Add(targetWindow);
+            }
+
+            _groupHoverConfirmed = true;
+            ApplyGroupVisuals();
+        }
+
+        private void CommitGroupFromProvisional()
+        {
+            if (!_groupHoverConfirmed || _provisionalGroup == null) return;
+
+            // Collect old groups that contain any provisional member.
+            var oldGroups = new HashSet<TaskGroup>();
+            foreach (var w in _provisionalGroup.Windows)
+            {
+                var g = GetGroupForWindow(w);
+                if (g != null) oldGroups.Add(g);
+            }
+
+            // Strip those windows from their old groups (may dissolve them).
+            foreach (var g in oldGroups)
+            {
+                g.Windows.RemoveAll(w => _provisionalGroup.Windows.Contains(w));
+                if (g.Windows.Count <= 1)
+                    _taskGroups.Remove(g);
+            }
+
+            // The provisional object becomes the committed group.
+            _taskGroups.Add(_provisionalGroup);
+            _provisionalGroup = null;
+            _groupHoverConfirmed = false;
+            _groupHoverTargetIndex = -1;
+        }
+
+        // Computes the dragged button's bounding rect in WrapPanel coordinates,
+        // accounting for the cursor offset along the drag axis.
+        private Rect GetDraggedRect(Vector delta, bool horizontal)
+        {
+            var s = _dragSlots[_dragFromIndex];
+            var sz = _dragSizes[_dragFromIndex];
+            return new Rect(
+                s.X + (horizontal ? delta.X : 0),
+                s.Y + (horizontal ? 0 : delta.Y),
+                sz.Width, sz.Height);
+        }
+
+        // Bounding rect for a sibling button, including any active sibling animation offset.
+        private Rect GetSlotRect(int idx)
+        {
+            var s = _dragSlots[idx];
+            var sz = _dragSizes[idx];
+            double ox = 0, oy = 0;
+            if (_dragSiblingTargets.TryGetValue(_dragContainers[idx], out Point target))
+            {
+                ox = target.X;
+                oy = target.Y;
+            }
+            return new Rect(s.X + ox, s.Y + oy, sz.Width, sz.Height);
+        }
+
+        // Returns the fraction of the dragged button's main-axis dimension that overlaps `other`.
+        // At 50% the drag-swap fires; 25% is the threshold for starting the group-hover timer.
+        private static float OverlapFraction(Rect dragged, Rect other, bool horizontal)
+        {
+            double dim = horizontal ? dragged.Width : dragged.Height;
+            if (dim <= 0) return 0f;
+            double overlap = horizontal
+                ? Math.Max(0, Math.Min(dragged.Right, other.Right) - Math.Max(dragged.Left, other.Left))
+                : Math.Max(0, Math.Min(dragged.Bottom, other.Bottom) - Math.Max(dragged.Top, other.Top));
+            return (float)(overlap / dim);
+        }
+
+        #endregion
+
         #region Live drag reorder
 
         // Windows 10-style live reordering: the dragged button tracks the cursor while the
@@ -334,6 +636,13 @@ namespace RetroBar.Controls
         private int _dragFromIndex;
         private int _dragToIndex;
         private readonly Dictionary<ContentPresenter, Point> _dragSiblingTargets = new();
+
+        // Non-primary group members that travel with the dragged button.
+        private List<int> _dragGroupMemberIndices = new List<int>();
+        // Group members sorted by their original slot position (primary included).
+        private List<int> _dragGroupSorted = new List<int>();
+        // Index of the primary button within _dragGroupSorted.
+        private int _dragGroupPrimaryOffset;
 
         public bool IsDraggingButton => _isDragging;
 
@@ -378,6 +687,32 @@ namespace RetroBar.Controls
             // The button already holds mouse capture from its press, so cursor tracking and the
             // capture-loss that ends the drag both flow through that existing capture.
             Panel.SetZIndex(_dragContainer, 100);
+
+            // Collect group members that must travel with the primary dragged button.
+            _dragGroupMemberIndices = new List<int>();
+            _dragGroupSorted = new List<int>();
+            _dragGroupPrimaryOffset = 0;
+
+            var draggedWindow = _dragContainer.DataContext as ApplicationWindow;
+            var draggedGroup = draggedWindow != null ? GetGroupForWindow(draggedWindow) : null;
+            if (draggedGroup != null && draggedGroup.Windows.Count > 1)
+            {
+                bool horizontal = Host?.Orientation != Orientation.Vertical;
+                for (int i = 0; i < _dragContainers.Count; i++)
+                {
+                    if (i == _dragFromIndex) continue;
+                    if (_dragContainers[i].DataContext is ApplicationWindow w && draggedGroup.Windows.Contains(w))
+                    {
+                        _dragGroupMemberIndices.Add(i);
+                        Panel.SetZIndex(_dragContainers[i], 99);
+                    }
+                }
+
+                _dragGroupSorted = new List<int>(_dragGroupMemberIndices) { _dragFromIndex };
+                _dragGroupSorted.Sort((a, b) =>
+                    MainCoord(_dragSlots[a], horizontal).CompareTo(MainCoord(_dragSlots[b], horizontal)));
+                _dragGroupPrimaryOffset = _dragGroupSorted.IndexOf(_dragFromIndex);
+            }
         }
 
         public void UpdateButtonDrag(MouseEventArgs e)
@@ -403,6 +738,24 @@ namespace RetroBar.Controls
                 draggedTransform.Y = delta.Y;
             }
 
+            // All group members travel with the same cursor delta.
+            foreach (int gi in _dragGroupMemberIndices)
+            {
+                var gt = GetTranslate(_dragContainers[gi]);
+                gt.BeginAnimation(TranslateTransform.XProperty, null);
+                gt.BeginAnimation(TranslateTransform.YProperty, null);
+                if (horizontal)
+                {
+                    gt.X = delta.X;
+                    gt.Y = 0;
+                }
+                else
+                {
+                    gt.X = 0;
+                    gt.Y = delta.Y;
+                }
+            }
+
             // Step the gap one slot at a time. A swap triggers once the dragged button's leading
             // edge (in the direction of travel) passes the midpoint of the neighbouring button as
             // it is currently displayed, which is symmetric for both directions.
@@ -413,13 +766,54 @@ namespace RetroBar.Controls
 
             int to = _dragToIndex;
             int count = _dragContainers.Count;
-            while (to < count - 1 && draggedCenter + half > SlotCenter(to + 1, horizontal)) to++;
-            while (to > 0 && draggedCenter - half < SlotCenter(to - 1, horizontal)) to--;
+
+            // Clamp so that for a group block the whole block stays within [0, count-1].
+            // For a single button, this reduces to the original [0, count-1] bounds.
+            int toMin, toMax;
+            if (_dragGroupSorted.Count > 0)
+            {
+                int gs = _dragGroupSorted.Count;
+                toMin = _dragGroupPrimaryOffset;
+                toMax = count - gs + _dragGroupPrimaryOffset;
+            }
+            else
+            {
+                toMin = 0;
+                toMax = count - 1;
+            }
+
+            while (to < toMax && draggedCenter + half > SlotCenter(to + 1, horizontal)) to++;
+            while (to > toMin && draggedCenter - half < SlotCenter(to - 1, horizontal)) to--;
 
             if (to != _dragToIndex)
             {
                 _dragToIndex = to;
-                LayoutDragSiblings();
+                LayoutDragSiblings(horizontal);
+            }
+
+            // Group hover detection: only when dragging a single ungrouped button.
+            if (_dragGroupMemberIndices.Count == 0)
+            {
+                var draggedRect = GetDraggedRect(delta, horizontal);
+                int overlapIdx = -1;
+
+                for (int i = 0; i < _dragContainers.Count; i++)
+                {
+                    if (i == _dragFromIndex) continue;
+                    if (OverlapFraction(draggedRect, GetSlotRect(i), horizontal) >= 0.25f)
+                    {
+                        overlapIdx = i;
+                        break;
+                    }
+                }
+
+                if (overlapIdx != _groupHoverTargetIndex)
+                {
+                    // Cancel previous state (even if confirmed — dragging away always cancels).
+                    CancelGroupHover();
+                    if (overlapIdx >= 0)
+                        StartGroupHover(overlapIdx);
+                }
             }
         }
 
@@ -435,6 +829,13 @@ namespace RetroBar.Controls
             // animation can't restart UpdateButtonDrag and cancel the snap (leaving it stuck).
             _isDragging = false;
 
+            // Commit or cancel provisional group before starting snap animation.
+            if (_groupHoverConfirmed)
+                CommitGroupFromProvisional();
+            else
+                CancelGroupHover();
+
+            bool horizontal = Host?.Orientation != Orientation.Vertical;
             Vector finalOffset = _dragSlots[_dragToIndex] - _dragSlots[_dragFromIndex];
             var transform = GetTranslate(_dragContainer);
             transform.BeginAnimation(TranslateTransform.XProperty, null);
@@ -446,10 +847,39 @@ namespace RetroBar.Controls
             animX.Completed += (_, _) => CommitDrag();
             transform.BeginAnimation(TranslateTransform.XProperty, animX);
             transform.BeginAnimation(TranslateTransform.YProperty, animY);
+
+            // Snap each group member to its final resting slot.
+            if (_dragGroupSorted.Count > 0)
+            {
+                int count = _dragContainers.Count;
+                int groupSize = _dragGroupSorted.Count;
+                int groupStart = Math.Max(0, Math.Min(_dragToIndex - _dragGroupPrimaryOffset, count - groupSize));
+
+                for (int k = 0; k < groupSize; k++)
+                {
+                    int idx = _dragGroupSorted[k];
+                    if (idx == _dragFromIndex) continue;
+                    int targetSlot = groupStart + k;
+                    Vector memberFinal = _dragSlots[targetSlot] - _dragSlots[idx];
+                    var gt = GetTranslate(_dragContainers[idx]);
+                    gt.BeginAnimation(TranslateTransform.XProperty, null);
+                    gt.BeginAnimation(TranslateTransform.YProperty, null);
+                    gt.BeginAnimation(TranslateTransform.XProperty,
+                        new DoubleAnimation(gt.X, memberFinal.X, TimeSpan.FromMilliseconds(DragSnapMs)) { EasingFunction = ease });
+                    gt.BeginAnimation(TranslateTransform.YProperty,
+                        new DoubleAnimation(gt.Y, memberFinal.Y, TimeSpan.FromMilliseconds(DragSnapMs)) { EasingFunction = ease });
+                }
+            }
         }
 
-        private void LayoutDragSiblings()
+        private void LayoutDragSiblings(bool horizontal)
         {
+            if (_dragGroupSorted.Count > 0)
+            {
+                LayoutDragSiblingsGroup(horizontal);
+                return;
+            }
+
             // Build the display order with the dragged item reinserted at the target index.
             var order = new List<int>(_dragContainers.Count);
             for (int i = 0; i < _dragContainers.Count; i++)
@@ -464,6 +894,32 @@ namespace RetroBar.Controls
                 if (idx == _dragFromIndex) continue; // dragged button follows the cursor
 
                 Vector offset = _dragSlots[pos] - _dragSlots[idx];
+                AnimateSibling(_dragContainers[idx], offset);
+            }
+        }
+
+        private void LayoutDragSiblingsGroup(bool horizontal)
+        {
+            int count = _dragContainers.Count;
+            int groupSize = _dragGroupSorted.Count;
+            int groupStart = Math.Max(0, Math.Min(_dragToIndex - _dragGroupPrimaryOffset, count - groupSize));
+
+            // Non-group buttons in their original slot order.
+            var nonGroup = new List<int>(count - groupSize);
+            for (int i = 0; i < count; i++)
+                if (!_dragGroupSorted.Contains(i)) nonGroup.Add(i);
+
+            int nonGroupPos = 0;
+            for (int visualPos = 0; visualPos < count; visualPos++)
+            {
+                if (visualPos >= groupStart && visualPos < groupStart + groupSize)
+                {
+                    // Slot occupied by a group member — they follow the cursor directly, no animation.
+                    continue;
+                }
+
+                int idx = nonGroup[nonGroupPos++];
+                Vector offset = _dragSlots[visualPos] - _dragSlots[idx];
                 AnimateSibling(_dragContainers[idx], offset);
             }
         }
@@ -491,40 +947,73 @@ namespace RetroBar.Controls
 
             int from = _dragFromIndex;
             int to = _dragToIndex;
+            bool horizontal = Host?.Orientation != Orientation.Vertical;
 
-            if (to != from && taskbarItems?.SourceCollection is ObservableCollection<ApplicationWindow> source
-                && _dragContainer.DataContext is ApplicationWindow dragged)
+            if (taskbarItems?.SourceCollection is ObservableCollection<ApplicationWindow> source)
             {
-                // Determine the window the dragged button now precedes in the new visual order.
-                var order = new List<int>(_dragContainers.Count);
-                for (int i = 0; i < _dragContainers.Count; i++)
+                if (_dragGroupSorted.Count > 0)
                 {
-                    if (i != from) order.Add(i);
-                }
-                order.Insert(to, from);
+                    // Reorder collection to match the group block's final visual order.
+                    int count = _dragContainers.Count;
+                    int groupSize = _dragGroupSorted.Count;
+                    int groupStart = Math.Max(0, Math.Min(to - _dragGroupPrimaryOffset, count - groupSize));
 
-                ApplicationWindow neighbor = null;
-                if (to + 1 < order.Count)
-                {
-                    neighbor = _dragContainers[order[to + 1]].DataContext as ApplicationWindow;
-                }
+                    var nonGroup = new List<int>(count - groupSize);
+                    for (int i = 0; i < count; i++)
+                        if (!_dragGroupSorted.Contains(i)) nonGroup.Add(i);
 
-                int srcFrom = source.IndexOf(dragged);
-                if (srcFrom >= 0)
-                {
-                    int srcTo;
-                    if (neighbor != null)
+                    // Build the desired visual order list.
+                    var order = new List<int>(count);
+                    int ngPos = 0;
+                    for (int pos = 0; pos < count; pos++)
                     {
-                        srcTo = source.IndexOf(neighbor);
-                        if (srcTo > srcFrom) srcTo--;
-                    }
-                    else
-                    {
-                        srcTo = source.Count - 1;
+                        if (pos >= groupStart && pos < groupStart + groupSize)
+                            order.Add(_dragGroupSorted[pos - groupStart]);
+                        else
+                            order.Add(nonGroup[ngPos++]);
                     }
 
-                    if (srcTo >= 0 && srcTo != srcFrom)
-                        source.Move(srcFrom, srcTo);
+                    // Apply the desired order to the source collection.
+                    var desired = order.Select(i => _dragContainers[i].DataContext as ApplicationWindow).ToList();
+                    for (int i = 0; i < desired.Count; i++)
+                    {
+                        int cur = source.IndexOf(desired[i]);
+                        if (cur != i) source.Move(cur, i);
+                    }
+                }
+                else if (to != from && _dragContainer.DataContext is ApplicationWindow dragged)
+                {
+                    // Determine the window the dragged button now precedes in the new visual order.
+                    var order = new List<int>(_dragContainers.Count);
+                    for (int i = 0; i < _dragContainers.Count; i++)
+                    {
+                        if (i != from) order.Add(i);
+                    }
+                    order.Insert(to, from);
+
+                    ApplicationWindow neighbor = null;
+                    if (to + 1 < order.Count)
+                    {
+                        neighbor = _dragContainers[order[to + 1]].DataContext as ApplicationWindow;
+                    }
+
+                    int srcFrom = source.IndexOf(dragged);
+                    if (srcFrom >= 0)
+                    {
+                        int srcTo;
+                        if (neighbor != null)
+                        {
+                            srcTo = source.IndexOf(neighbor);
+                            if (srcTo > srcFrom) srcTo--;
+                        }
+                        else
+                        {
+                            srcTo = source.Count - 1;
+                        }
+
+                        if (srcTo >= 0 && srcTo != srcFrom)
+                            source.Move(srcFrom, srcTo);
+                    }
                 }
             }
 
@@ -548,6 +1037,12 @@ namespace RetroBar.Controls
             _dragSizes = null;
             _dragPanel = null;
             _dragSiblingTargets.Clear();
+            _dragGroupMemberIndices = new List<int>();
+            _dragGroupSorted = new List<int>();
+            _dragGroupPrimaryOffset = 0;
+
+            // Reapply group visuals after layout settles (collection moves may recycle containers).
+            Dispatcher.BeginInvoke(DispatcherPriority.Loaded, (Action)ApplyGroupVisuals);
         }
 
         private static TranslateTransform GetTranslate(ContentPresenter cp)

@@ -140,6 +140,8 @@
     <s:String x:Key="size">_Size</s:String>
     <s:String x:Key="minimize">Mi_nimize</s:String>
     <s:String x:Key="maximize">Ma_ximize</s:String>
+    <s:String x:Key="remove_from_group">_Remove from group</s:String>
+    <s:String x:Key="remove_group">Remove _group</s:String>
     <s:String x:Key="close">_Close</s:String>
     <s:String x:Key="end_task">_End task</s:String>
 

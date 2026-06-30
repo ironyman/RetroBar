@@ -6,6 +6,7 @@ using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Interop;
+using System.Windows.Media;
 using System.Windows.Media.Animation;
 using ManagedShell.Common.Helpers;
 using ManagedShell.Common.Logging;
@@ -110,7 +111,18 @@ namespace RetroBar.Controls
                 Animate();
             }
 
+            Host?.RefreshGroupVisual(this);
             _isLoaded = true;
+        }
+
+        public void SetGroupColor(Color? color)
+        {
+            GroupIndicatorRect.BorderBrush = color.HasValue
+                ? new SolidColorBrush(color.Value)
+                : Brushes.Transparent;
+            var vis = color.HasValue ? Visibility.Visible : Visibility.Collapsed;
+            RemoveFromGroupMenuItem.Visibility = vis;
+            RemoveGroupMenuItem.Visibility = vis;
         }
 
         private void Window_GetButtonRect(ref NativeMethods.ShortRect rect)
@@ -247,6 +259,16 @@ namespace RetroBar.Controls
         private void MaximizeMenuItem_OnClick(object sender, RoutedEventArgs e)
         {
             Window?.Maximize();
+        }
+
+        private void RemoveFromGroupMenuItem_OnClick(object sender, RoutedEventArgs e)
+        {
+            Host?.UngroupWindow(Window);
+        }
+
+        private void RemoveGroupMenuItem_OnClick(object sender, RoutedEventArgs e)
+        {
+            Host?.RemoveGroup(Window);
         }
 
         private void AppButton_OnClick(object sender, RoutedEventArgs e)
