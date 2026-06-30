@@ -507,6 +507,15 @@ namespace RetroBar.Controls
             UpdateGroupVisuals();
         }
 
+        // Called from TaskButton right-click → New color for group.
+        public void ChangeGroupColor(ApplicationWindow window)
+        {
+            var group = GetGroupForWindow(window);
+            if (group == null) return;
+            group.GroupColor = TaskGroup.RandomColor();
+            UpdateGroupVisuals();
+        }
+
         // Called from TaskButton right-click → Remove group.
         // Dissolves group membership for all windows without repositioning them.
         public void RemoveGroup(ApplicationWindow window)

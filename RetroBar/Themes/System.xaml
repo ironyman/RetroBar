@@ -139,6 +139,12 @@
                                               HorizontalAlignment="Center"
                                               VerticalAlignment="Center"
                                               Margin="6,0,4,0" />
+                            <TextBlock x:Name="CheckMark"
+                                       Grid.Column="0"
+                                       Text="&#x2713;"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center"
+                                       Visibility="Collapsed" />
                             <ContentPresenter Grid.Column="1"
                                               ContentSource="Header"
                                               RecognizesAccessKey="True"
@@ -169,6 +175,9 @@
                         </Trigger>
                         <Trigger Property="Role" Value="SubmenuHeader">
                             <Setter TargetName="Arrow" Property="Visibility" Value="Visible" />
+                        </Trigger>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="CheckMark" Property="Visibility" Value="Visible" />
                         </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>

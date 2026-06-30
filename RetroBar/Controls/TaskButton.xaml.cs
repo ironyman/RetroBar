@@ -1,6 +1,7 @@
 ﻿using System;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
@@ -123,6 +124,7 @@ namespace RetroBar.Controls
             var vis = color.HasValue ? Visibility.Visible : Visibility.Collapsed;
             RemoveFromGroupMenuItem.Visibility = vis;
             RemoveGroupMenuItem.Visibility = vis;
+            GroupNewColorMenuItem.Visibility = vis;
         }
 
         private void Window_GetButtonRect(ref NativeMethods.ShortRect rect)
@@ -197,6 +199,12 @@ namespace RetroBar.Controls
             }
             MoveMenuItem.IsEnabled = wss == NativeMethods.WindowShowStyle.ShowNormal;
             SizeMenuItem.IsEnabled = wss == NativeMethods.WindowShowStyle.ShowNormal && (ws & (int)NativeMethods.WindowStyles.WS_MAXIMIZEBOX) != 0;
+
+            int exStyle = NativeMethods.GetWindowLong(Window.Handle, NativeMethods.GWL_EXSTYLE);
+            AlwaysOnTopMenuItem.IsChecked = (exStyle & (int)NativeMethods.ExtendedWindowStyles.WS_EX_TOPMOST) != 0;
+            CenterOnScreenMenuItem.IsEnabled = wss != NativeMethods.WindowShowStyle.ShowMinimized;
+            OpenContainingFolderMenuItem.Visibility = (!Window.IsUWP && !string.IsNullOrEmpty(Window.WinFileName))
+                ? Visibility.Visible : Visibility.Collapsed;
         }
 
         private void CloseMenuItem_OnClick(object sender, RoutedEventArgs e)
@@ -269,6 +277,48 @@ namespace RetroBar.Controls
         private void RemoveGroupMenuItem_OnClick(object sender, RoutedEventArgs e)
         {
             Host?.RemoveGroup(Window);
+        }
+
+        private void GroupNewColorMenuItem_OnClick(object sender, RoutedEventArgs e)
+        {
+            Host?.ChangeGroupColor(Window);
+        }
+
+        private void AlwaysOnTopMenuItem_OnClick(object sender, RoutedEventArgs e)
+        {
+            if (Window == null) return;
+            // IsChecked reflects the new desired state after WPF toggles it on click.
+            IntPtr insertAfter = AlwaysOnTopMenuItem.IsChecked
+                ? new IntPtr((int)NativeMethods.WindowZOrder.HWND_TOPMOST)
+                : new IntPtr((int)NativeMethods.WindowZOrder.HWND_NOTOPMOST);
+            NativeMethods.SetWindowPos(Window.Handle, insertAfter, 0, 0, 0, 0,
+                (int)(NativeMethods.SetWindowPosFlags.SWP_NOMOVE | NativeMethods.SetWindowPosFlags.SWP_NOSIZE | NativeMethods.SetWindowPosFlags.SWP_NOACTIVATE));
+        }
+
+        private void CenterOnScreenMenuItem_OnClick(object sender, RoutedEventArgs e)
+        {
+            if (Window == null) return;
+            NativeMethods.GetWindowRect(Window.Handle, out NativeMethods.Rect winRect);
+            int winW = winRect.Right - winRect.Left;
+            int winH = winRect.Bottom - winRect.Top;
+            var screen = System.Windows.Forms.Screen.FromHandle(Window.Handle);
+            var wa = screen.WorkingArea;
+            int x = wa.Left + (wa.Width - winW) / 2;
+            int y = wa.Top + (wa.Height - winH) / 2;
+            NativeMethods.SetWindowPos(Window.Handle, IntPtr.Zero, x, y, 0, 0,
+                (int)(NativeMethods.SetWindowPosFlags.SWP_NOSIZE | NativeMethods.SetWindowPosFlags.SWP_NOZORDER));
+        }
+
+        private void OpenContainingFolderMenuItem_OnClick(object sender, RoutedEventArgs e)
+        {
+            if (Window == null || string.IsNullOrEmpty(Window.WinFileName)) return;
+            try
+            {
+                string dir = Path.GetDirectoryName(Window.WinFileName);
+                if (!string.IsNullOrEmpty(dir))
+                    Process.Start("explorer.exe", $"/select,\"{Window.WinFileName}\"");
+            }
+            catch { }
         }
 
         private void AppButton_OnClick(object sender, RoutedEventArgs e)

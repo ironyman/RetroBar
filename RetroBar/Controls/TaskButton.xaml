@@ -96,6 +96,21 @@
                           Click="RemoveGroupMenuItem_OnClick"
                           Name="RemoveGroupMenuItem"
                           Visibility="Collapsed" />
+                <MenuItem Header="{DynamicResource group_new_color}"
+                          Click="GroupNewColorMenuItem_OnClick"
+                          Name="GroupNewColorMenuItem"
+                          Visibility="Collapsed" />
+                <Separator />
+                <MenuItem Header="{DynamicResource always_on_top}"
+                          Click="AlwaysOnTopMenuItem_OnClick"
+                          Name="AlwaysOnTopMenuItem"
+                          IsCheckable="True" />
+                <MenuItem Header="{DynamicResource center_on_screen}"
+                          Click="CenterOnScreenMenuItem_OnClick"
+                          Name="CenterOnScreenMenuItem" />
+                <MenuItem Header="{DynamicResource open_containing_folder}"
+                          Click="OpenContainingFolderMenuItem_OnClick"
+                          Name="OpenContainingFolderMenuItem" />
                 <Separator />
                 <MenuItem Header="{DynamicResource end_task}"
                           Click="EndTaskMenuItem_OnClick"
