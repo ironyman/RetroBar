@@ -22,11 +22,6 @@ namespace RetroBar.Utilities
         private LowLevelKeyboardHook _keyboardHook;
         private const int TOGGLE_DESKTOP = 407;
 
-        // TEMP DEBUG: set true to skip installing the WH_KEYBOARD_LL hook entirely, to test
-        // whether Win+B going unresponsive after long uptime is caused by the hook vs. the
-        // RegisterHotKey/WM_HOTKEY path.
-        private const bool DisableKeyboardHookForTesting = true;
-
         public HotkeyManager(EarlyWinBReservation earlyWinBReservation = null)
         {
             _listenerWindow = new HotkeyListenerWindow(this);
@@ -49,8 +44,16 @@ namespace RetroBar.Utilities
             dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(InitializeHotkeys));
         }
 
+        // TEMP DEBUG: set true to launch the VS debugger when hotkey initialization begins.
+        // A JIT debugger dialog appears — choose your VS instance. Symbols load correctly.
+        // No registry changes or admin rights needed.
+        private const bool BreakOnInitializeHotkeys = false;
+
         private void InitializeHotkeys()
         {
+            if (BreakOnInitializeHotkeys)
+                Debugger.Launch();
+
             ShellLogger.Info("HotkeyManager: Initializing hotkeys (deferred to application idle)");
 
             // Release the early reservation right before registering for real, so the gap where
@@ -61,20 +64,13 @@ namespace RetroBar.Utilities
             // which suppresses the Start menu automatically when Win is used as a modifier).
             _listenerWindow.RegisterSystemHotkeys();
 
-            // Keyboard hook covers Win+B/D only if RegisterHotKey failed for them.
-            if (!DisableKeyboardHookForTesting)
-            {
-                _keyboardHook = new LowLevelKeyboardHook();
-                _keyboardHook.IgnoreBKey = _listenerWindow.IsBRegistered;
-                _keyboardHook.FocusTrayRequested += OnFocusTrayRequested;
-                _keyboardHook.ShowDesktopRequested += OnShowDesktopRequested;
-                _keyboardHook.EscapeKeyDown += () => EscapeKeyDown?.Invoke();
-                _keyboardHook.Initialize();
-            }
-            else
-            {
-                ShellLogger.Warning("HotkeyManager: Keyboard hook disabled for testing (DisableKeyboardHookForTesting=true)");
-            }
+            // The low-level keyboard hook handles Win+F1, which the OS reserves for Windows Help
+            // and therefore can't be claimed via RegisterHotKey, plus Escape (to close tray/task
+            // context menus). Win+B and Win+D are handled entirely by RegisterHotKey above.
+            _keyboardHook = new LowLevelKeyboardHook();
+            _keyboardHook.SwitchToFirstWorkspaceRequested += OnSwitchToFirstWorkspaceRequested;
+            _keyboardHook.EscapeKeyDown += () => EscapeKeyDown?.Invoke();
+            _keyboardHook.Initialize();
 
             if (Settings.Instance.WinNumHotkeysAction != WinNumHotkeysOption.WindowsDefault)
                 _listenerWindow.RegisterNumberHotkeys();
@@ -87,10 +83,8 @@ namespace RetroBar.Utilities
         private bool _savedForegroundWasMaximized = false;
         private bool _desktopShowing = false;
 
-        private void OnFocusTrayRequested() =>
-            FocusTrayHotkeyPressed?.Invoke(this, EventArgs.Empty);
-
-        private void OnShowDesktopRequested() => DoToggleDesktop();
+        private void OnSwitchToFirstWorkspaceRequested() =>
+            WorkspaceManager.Instance.SwitchToWorkspace(1);
 
         internal void DoToggleDesktop()
         {
@@ -98,7 +92,7 @@ namespace RetroBar.Utilities
             // Builtin win+d has this problem too.
             // This is to fix that.
             // Actually this still doesn't always work.
-            
+
             IntPtr tray = WindowHelper.FindWindowsTray(IntPtr.Zero);
             if (!_desktopShowing)
             {
@@ -181,8 +175,7 @@ namespace RetroBar.Utilities
         {
             if (_keyboardHook != null)
             {
-                _keyboardHook.FocusTrayRequested -= OnFocusTrayRequested;
-                _keyboardHook.ShowDesktopRequested -= OnShowDesktopRequested;
+                _keyboardHook.SwitchToFirstWorkspaceRequested -= OnSwitchToFirstWorkspaceRequested;
                 _keyboardHook.Dispose();
             }
             _listenerWindow.UnregisterSystemHotkeys();
@@ -260,15 +253,17 @@ namespace RetroBar.Utilities
 
                     if (hotkeyId >= HOTKEY_ID_VDESK_SWITCH && hotkeyId < HOTKEY_ID_VDESK_SWITCH + VDESK_HOTKEY_COUNT)
                     {
-                        VirtualDesktopHelper.SwitchToDesktop(hotkeyId - HOTKEY_ID_VDESK_SWITCH);
+                        WorkspaceManager.Instance.SwitchToWorkspace(hotkeyId - HOTKEY_ID_VDESK_SWITCH + 1);
                         return;
                     }
 
                     if (hotkeyId >= HOTKEY_ID_VDESK_MOVE && hotkeyId < HOTKEY_ID_VDESK_MOVE + VDESK_HOTKEY_COUNT)
                     {
+                        int targetWorkspace = hotkeyId - HOTKEY_ID_VDESK_MOVE + 1;
                         IntPtr foreground = GetForegroundWindow();
                         if (foreground != IntPtr.Zero)
-                            VirtualDesktopHelper.MoveWindowToDesktop(foreground, hotkeyId - HOTKEY_ID_VDESK_MOVE);
+                            WorkspaceManager.Instance.MoveWindowToWorkspace(foreground, targetWorkspace);
+                        WorkspaceManager.Instance.SwitchToWorkspace(targetWorkspace);
                         return;
                     }
 
@@ -507,18 +502,39 @@ namespace RetroBar.Utilities
                 _registeredNumberHotkeys.Clear();
             }
 
+            // TEMP DEBUG: set true to launch the VS debugger when virtual desktop hotkey
+            // registration begins. A JIT dialog appears — choose your VS instance.
+            // No registry changes or admin rights needed.
+            private const bool BreakOnVirtualDesktopHotkeys = false;
+
             public void RegisterVirtualDesktopHotkeys()
             {
+                if (BreakOnVirtualDesktopHotkeys)
+                {
+                    if (!Debugger.IsAttached)
+                    {
+                        Debugger.Launch();
+                    }
+
+                    Debugger.Break();
+                }
+
                 ShellLogger.Info("HotkeyManager: Registering virtual desktop hotkeys (Win+F1-F9, Win+Shift+F1-F9)");
                 VK[] fKeys = { VK.F1, VK.F2, VK.F3, VK.F4, VK.F5, VK.F6, VK.F7, VK.F8, VK.F9 };
                 try
                 {
                     for (int i = 0; i < fKeys.Length; i++)
                     {
-                        if (RegisterHotKey(Handle, HOTKEY_ID_VDESK_SWITCH + i, (uint)(MOD.WIN | MOD.NOREPEAT), (uint)fKeys[i]))
-                            _registeredVirtualDesktopHotkeys.Add(HOTKEY_ID_VDESK_SWITCH + i);
-                        else
-                            ShellLogger.Warning($"HotkeyManager: Failed to register Win+F{i + 1}");
+                        // Win+F1 is OS-reserved (Windows Help) and can't be claimed via
+                        // RegisterHotKey; it's handled by the low-level keyboard hook instead.
+                        // F2-F9 register normally.
+                        if (i > 0)
+                        {
+                            if (RegisterHotKey(Handle, HOTKEY_ID_VDESK_SWITCH + i, (uint)(MOD.WIN | MOD.NOREPEAT), (uint)fKeys[i]))
+                                _registeredVirtualDesktopHotkeys.Add(HOTKEY_ID_VDESK_SWITCH + i);
+                            else
+                                ShellLogger.Warning($"HotkeyManager: Failed to register Win+F{i + 1}");
+                        }
 
                         if (RegisterHotKey(Handle, HOTKEY_ID_VDESK_MOVE + i, (uint)(MOD.WIN | MOD.NOREPEAT | MOD.SHIFT), (uint)fKeys[i]))
                             _registeredVirtualDesktopHotkeys.Add(HOTKEY_ID_VDESK_MOVE + i);

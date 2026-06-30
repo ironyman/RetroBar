@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
@@ -199,6 +199,23 @@ namespace RetroBar.Controls
             }
             MoveMenuItem.IsEnabled = wss == NativeMethods.WindowShowStyle.ShowNormal;
             SizeMenuItem.IsEnabled = wss == NativeMethods.WindowShowStyle.ShowNormal && (ws & (int)NativeMethods.WindowStyles.WS_MAXIMIZEBOX) != 0;
+
+            SendToWorkspaceMenuItem.Items.Clear();
+            for (int i = 1; i <= Utilities.WorkspaceManager.WorkspaceCount; i++)
+            {
+                int wsNum = i;
+                int wsCount = Utilities.WorkspaceManager.Instance.GetWorkspaceWindowCount(i);
+                bool isWindowHere = Utilities.WorkspaceManager.Instance.GetWindowWorkspace(Window.Handle) == i;
+                var wsItem = new MenuItem
+                {
+                    Header = $"Workspace {i} ({wsCount})",
+                    IsCheckable = true,
+                    IsChecked = isWindowHere,
+                    IsEnabled = !isWindowHere
+                };
+                wsItem.Click += (_, _) => Utilities.WorkspaceManager.Instance.MoveWindowToWorkspace(Window.Handle, wsNum);
+                SendToWorkspaceMenuItem.Items.Add(wsItem);
+            }
 
             int exStyle = NativeMethods.GetWindowLong(Window.Handle, NativeMethods.GWL_EXSTYLE);
             AlwaysOnTopMenuItem.IsChecked = (exStyle & (int)NativeMethods.ExtendedWindowStyles.WS_EX_TOPMOST) != 0;
@@ -479,6 +496,21 @@ namespace RetroBar.Controls
             });
         }
 
+        private static bool IsPointInsideMenuCascade(LowLevelMouseHook.POINT pt)
+        {
+            foreach (PresentationSource source in PresentationSource.CurrentSources)
+            {
+                if (source is HwndSource hwndSource
+                    && source.RootVisual?.GetType().Name == "PopupRoot")
+                {
+                    NativeMethods.GetWindowRect(hwndSource.Handle, out NativeMethods.Rect r);
+                    if (pt.X >= r.Left && pt.X <= r.Right && pt.Y >= r.Top && pt.Y <= r.Bottom)
+                        return true;
+                }
+            }
+            return false;
+        }
+
         private void OnContextMenuMouseEvent(object sender, LowLevelMouseHook.LowLevelMouseEventArgs args)
         {
             if (args.Message != NativeMethods.WM.LBUTTONDOWN && args.Message != NativeMethods.WM.RBUTTONDOWN)
@@ -489,11 +521,8 @@ namespace RetroBar.Controls
 
             try
             {
-                if (PresentationSource.FromVisual(menu) is not HwndSource menuSource) return;
-
-                NativeMethods.GetWindowRect(menuSource.Handle, out NativeMethods.Rect rect);
                 var pt = args.HookStruct.pt;
-                bool inside = pt.X >= rect.Left && pt.X <= rect.Right && pt.Y >= rect.Top && pt.Y <= rect.Bottom;
+                bool inside = IsPointInsideMenuCascade(pt);
                 if (!inside)
                 {
                     Dispatcher.BeginInvoke(() => { if (menu.IsOpen) menu.IsOpen = false; });

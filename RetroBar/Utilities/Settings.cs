@@ -416,6 +416,13 @@ namespace RetroBar.Utilities
             get => _allowBlurBehind;
             set => Set(ref _allowBlurBehind, value);
         }
+
+        private bool _flattenWorkspaceMenuItems = false;
+        public bool FlattenWorkspaceMenuItems
+        {
+            get => _flattenWorkspaceMenuItems;
+            set => Set(ref _flattenWorkspaceMenuItems, value);
+        }
         #endregion
 
         #region Old Properties

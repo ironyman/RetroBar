@@ -99,9 +99,15 @@ namespace RetroBar.Controls
 
                 Settings.Instance.PropertyChanged += Settings_PropertyChanged;
                 Host.hotkeyManager.TaskbarHotkeyPressed += TaskList_TaskbarHotkeyPressed;
+                WorkspaceManager.Instance.WorkspaceSwitched += WorkspaceManager_WorkspaceSwitched;
 
                 isLoaded = true;
             }
+        }
+
+        private void WorkspaceManager_WorkspaceSwitched(object sender, EventArgs e)
+        {
+            Dispatcher.BeginInvoke((Action)(() => taskbarItems?.Refresh()));
         }
 
         private static void TasksChangedCallback(DependencyObject sender, DependencyPropertyChangedEventArgs e)
@@ -171,6 +177,11 @@ namespace RetroBar.Controls
                     return false;
                 }
 
+                if (WorkspaceManager.Instance.IsHiddenByUs(window.Handle))
+                {
+                    return false;
+                }
+
                 if (!Settings.Instance.ShowMultiMon || Settings.Instance.MultiMonMode == MultiMonOption.AllTaskbars)
                 {
                     return true;
@@ -210,6 +221,7 @@ namespace RetroBar.Controls
             }
 
             Settings.Instance.PropertyChanged -= Settings_PropertyChanged;
+            WorkspaceManager.Instance.WorkspaceSwitched -= WorkspaceManager_WorkspaceSwitched;
 
             isLoaded = false;
         }

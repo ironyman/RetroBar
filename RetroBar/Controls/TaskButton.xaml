@@ -101,6 +101,9 @@
                           Name="GroupNewColorMenuItem"
                           Visibility="Collapsed" />
                 <Separator />
+                <MenuItem Header="Send to workspace"
+                          Name="SendToWorkspaceMenuItem" />
+                <Separator />
                 <MenuItem Header="{DynamicResource always_on_top}"
                           Click="AlwaysOnTopMenuItem_OnClick"
                           Name="AlwaysOnTopMenuItem"

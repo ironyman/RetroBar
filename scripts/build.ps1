@@ -73,6 +73,29 @@
     id=1000 and .NET Runtime id=1025) and print a summary. Exits with code 1 if any crash was
     found in the last 24 hours, 0 otherwise.
 
+.PARAMETER SetupDebugger
+    Configure Visual Studio (devenv.exe /debugexe) as the debugger for RetroBar.exe in the
+    registry (Image File Execution Options). When RetroBar.exe starts, VS launches with managed
+    debugging and symbols loaded. Add a Debugger.Break() call where you want to break.
+    Requires Administrator privileges (writes to HKLM). Remove with -RemoveDebugger.
+
+    You don't need to setup debugger, just insert this to break and launch VS is enough.
+    if (!Debugger.IsAttached)
+    {
+        Debugger.Launch();
+    }
+
+    Debugger.Break();
+
+.PARAMETER SetupVsjit
+    Same as -SetupDebugger but uses vsjitdebugger.exe (native-only JIT debugger) instead of
+    devenv.exe. Useful as a fallback when the full VS IDE is not available or when you only
+    need native debugging. .NET managed symbols will NOT load with this option.
+
+.PARAMETER RemoveDebugger
+    Remove the RetroBar.exe debugger registry entry set by -SetupDebugger. Requires Administrator
+    privileges.
+
 .PARAMETER Help
     Show this help message.
 
@@ -89,7 +112,7 @@
     .\build.ps1 -Target All -Relaunch          # stop, rebuild all, start RetroBar
     .\build.ps1 -Relaunch -NoRebuild           # stop and start RetroBar without rebuilding
     .\build.ps1 -Log                           # tail the current RetroBar log (no build)
-    .\build.ps1 -Relaunch -Log                 # stop, rebuild, start, then tail new log
+    .\build.ps1 -Relaunch -Log                 # stop, rebuild, start, then ztail new log
     .\build.ps1 -Launch -Log                   # build, start, then tail new log
     .\build.ps1 -Paths                         # show paths to settings, logs, and themes
     .\build.ps1 -Settings                      # open settings.json in the code editor
@@ -99,6 +122,9 @@
     .\build.ps1 -Uninstall                     # stop RetroBar and silently uninstall the release build
     .\build.ps1 -UninstallRelease              # same as -Uninstall
     .\build.ps1 -CheckCrash                    # check event log for recent RetroBar crashes
+    .\build.ps1 -SetupDebugger                 # set devenv /debugexe debugger (run as Admin)
+    .\build.ps1 -SetupVsjit                    # set vsjitdebugger (run as Admin)
+    .\build.ps1 -RemoveDebugger                # remove debugger registry (run as Admin)
 #>
 param(
     [Parameter(Position = 0)]
@@ -128,6 +154,9 @@ param(
     [switch]$Uninstall,
     [switch]$UninstallRelease,
     [switch]$CheckCrash,
+    [switch]$SetupDebugger,
+    [switch]$SetupVsjit,
+    [switch]$RemoveDebugger,
     [switch]$Help,
 
     # Internal: passed by -Background to tell the spawned process to launch RetroBar after building.
@@ -448,6 +477,113 @@ function Check-RetroBarCrashes {
     return $true
 }
 
+function Set-DebuggerRegistry {
+    <#
+    .SYNOPSIS
+    Sets Image File Execution Options (IFEO) so that Visual Studio's debugger is
+    launched whenever RetroBar.exe starts, allowing you to step through startup code.
+    .PARAMETER DebuggerType
+    'devenv' (default) uses devenv.exe /debugexe with managed debugging and symbols.
+    'vsjit' uses vsjitdebugger.exe (native-only, .NET symbols won't load).
+    #>
+    param([ValidateSet('devenv', 'vsjit')][string]$DebuggerType = 'devenv')
+
+    $ifeoPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\RetroBar.exe'
+    $exe = Join-Path $Root 'RetroBar\bin\Debug\net6.0-windows10.0.19041.0\RetroBar.exe'
+
+    if (-not (Test-Path $exe)) {
+        Write-Warning "RetroBar.exe not found at: $exe`nBuild first with: .\build.ps1"
+        return
+    }
+
+    $debuggerCmd = $null
+    $label = ''
+
+    if ($DebuggerType -eq 'devenv') {
+        $label = 'devenv.exe /debugexe (managed + symbols)'
+
+        # Find VS install via vswhere first, then fall back to well-known paths
+        $vsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+        $devenv = $null
+        if (Test-Path $vsWhere) {
+            $devenv = & $vsWhere -latest -property productPath 2>$null
+        }
+        if (-not $devenv) {
+            $candidates = @(
+                "${env:ProgramFiles}\Microsoft Visual Studio\2022\Community\Common7\IDE\devenv.exe"
+                "${env:ProgramFiles}\Microsoft Visual Studio\2022\Professional\Common7\IDE\devenv.exe"
+                "${env:ProgramFiles}\Microsoft Visual Studio\2022\Enterprise\Common7\IDE\devenv.exe"
+            )
+            $devenv = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+        }
+
+        if ($devenv) {
+            $debuggerCmd = "`"$devenv`" /debugexe"
+        } else {
+            Write-Warning 'Could not find devenv.exe. Try -SetupVsjit instead, or set the IFEO value manually:'
+            Write-Warning "  New-Item -Path '$ifeoPath' -Force | Out-Null"
+            Write-Warning "  New-ItemProperty -Path '$ifeoPath' -Name Debugger -Value '<your-debugger>' -PropertyType String -Force"
+            return
+        }
+    } else {
+        $label = 'vsjitdebugger.exe (native-only)'
+
+        if (Get-Command vsjitdebugger.exe -ErrorAction SilentlyContinue) {
+            $debuggerCmd = 'vsjitdebugger.exe'
+        } else {
+            Write-Warning 'Could not find vsjitdebugger.exe. Try -SetupDebugger instead, or set the IFEO value manually:'
+            Write-Warning "  New-Item -Path '$ifeoPath' -Force | Out-Null"
+            Write-Warning "  New-ItemProperty -Path '$ifeoPath' -Name Debugger -Value '<your-debugger>' -PropertyType String -Force"
+            return
+        }
+    }
+
+    try {
+        if (-not (Test-Path $ifeoPath)) {
+            New-Item -Path $ifeoPath -Force | Out-Null
+        }
+        New-ItemProperty -Path $ifeoPath -Name Debugger -Value $debuggerCmd -PropertyType String -Force | Out-Null
+        Write-Host "Debugger registry set for RetroBar.exe" -ForegroundColor Green
+        Write-Host "  Type : $label" -ForegroundColor Cyan
+        Write-Host "  Path : $ifeoPath" -ForegroundColor Cyan
+        Write-Host "  Value: $debuggerCmd" -ForegroundColor Cyan
+        Write-Host ""
+        Write-Host "When RetroBar.exe starts, the debugger will launch automatically." -ForegroundColor Yellow
+        Write-Host "Set a breakpoint flag to true in HotkeyManager.cs, then:" -ForegroundColor Yellow
+        Write-Host "  .\build.ps1 -Relaunch" -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "To remove: .\build.ps1 -RemoveDebugger" -ForegroundColor DarkCyan
+    } catch {
+        Write-Error "Failed to set debugger registry: $_"
+        Write-Host "Try running PowerShell as Administrator (IFEO is under HKLM)." -ForegroundColor Yellow
+    }
+}
+
+function Remove-DebuggerRegistry {
+    $ifeoPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\RetroBar.exe'
+
+    if (-not (Test-Path $ifeoPath)) {
+        Write-Host "No debugger registry entry found for RetroBar.exe." -ForegroundColor DarkYellow
+        return
+    }
+
+    try {
+        Remove-ItemProperty -Path $ifeoPath -Name Debugger -Force -ErrorAction SilentlyContinue
+
+        # If Debugger was the only value, also remove the key itself
+        $remaining = Get-ItemProperty -Path $ifeoPath -ErrorAction SilentlyContinue
+        $propCount = ($remaining.PSObject.Properties | Where-Object { $_.Name -notin @('PSPath','PSParentPath','PSChildName','PSDrive','PSProvider') }).Count
+        if ($propCount -eq 0) {
+            Remove-Item -Path $ifeoPath -Force
+        }
+
+        Write-Host "Debugger registry entry removed for RetroBar.exe." -ForegroundColor Green
+    } catch {
+        Write-Error "Failed to remove debugger registry: $_"
+        Write-Host "Try running PowerShell as Administrator (IFEO is under HKLM)." -ForegroundColor Yellow
+    }
+}
+
 # ---------------------------------------------------------------------------
 # Entry points
 # ---------------------------------------------------------------------------
@@ -460,6 +596,21 @@ if ($Help) {
 if ($CheckCrash) {
     $found = Check-RetroBarCrashes
     exit ([int]$found)
+}
+
+if ($SetupDebugger) {
+    Set-DebuggerRegistry -DebuggerType devenv
+    exit 0
+}
+
+if ($SetupVsjit) {
+    Set-DebuggerRegistry -DebuggerType vsjit
+    exit 0
+}
+
+if ($RemoveDebugger) {
+    Remove-DebuggerRegistry
+    exit 0
 }
 
 if ($Paths) {
@@ -500,11 +651,16 @@ if ($OpenLog) {
         Write-Warning "No log file found in: $logDir (RetroBar may not have been run yet)"
         exit 1
     }
-    $editor = if (Get-Command code -ErrorAction SilentlyContinue) { 'code' }
+    $editor = if (Get-Command zed -ErrorAction SilentlyContinue) { 'zed' }
+              elseif (Get-Command code -ErrorAction SilentlyContinue) { 'code' }
               elseif (Get-Command code-insiders -ErrorAction SilentlyContinue) { 'code-insiders' }
               else { $null }
     if ($editor) {
-        & $editor $logFile.FullName
+        if ($editor -eq 'zed') {
+            zed -n $logFile.FullName
+        } else {
+            & $editor $logFile.FullName
+        }
     } else {
         Start-Process $logFile.FullName
     }

@@ -559,9 +559,91 @@ namespace RetroBar
             }
         }
 
+        private static void RefreshWorkspaceMenuItems(ContextMenu menu)
+        {
+            MenuItem wsMenu = null;
+            foreach (var obj in menu.Items)
+            {
+                if (obj is MenuItem mi && mi.Tag as string == "workspace-switcher")
+                {
+                    wsMenu = mi;
+                    break;
+                }
+            }
+            if (wsMenu == null) return;
+
+            if (Settings.Instance.FlattenWorkspaceMenuItems)
+            {
+                // Remove previously-added flattened items
+                var toRemove = new System.Collections.Generic.List<object>();
+                foreach (var obj in menu.Items)
+                {
+                    if (obj is FrameworkElement fe && fe.Tag as string == "workspace-flat")
+                        toRemove.Add(obj);
+                }
+                foreach (var obj in toRemove)
+                    menu.Items.Remove(obj);
+
+                // Make header just a label
+                wsMenu.IsEnabled = false;
+                wsMenu.Items.Clear();
+
+                // Find the separator to insert before it
+                int insertIdx = menu.Items.Count;
+                foreach (var obj in menu.Items)
+                {
+                    if (obj is Separator sep && sep.Tag as string == "workspace-sep")
+                    {
+                        insertIdx = menu.Items.IndexOf(sep);
+                        break;
+                    }
+                }
+
+                // Insert flattened workspace items into the context menu
+                for (int i = WorkspaceManager.WorkspaceCount; i >= 1; i--)
+                {
+                    int ws = i;
+                    int count = WorkspaceManager.Instance.GetWorkspaceWindowCount(i);
+                    bool isCurrent = i == WorkspaceManager.Instance.CurrentWorkspace;
+                    var item = new MenuItem
+                    {
+                        Header = $"    Workspace {i} ({count})",
+                        IsCheckable = true,
+                        IsChecked = isCurrent,
+                        IsEnabled = !isCurrent,
+                        Tag = "workspace-flat"
+                    };
+                    item.Click += (_, _) => WorkspaceManager.Instance.SwitchToWorkspace(ws);
+                    menu.Items.Insert(insertIdx, item);
+                }
+            }
+            else
+            {
+                // Submenu mode
+                wsMenu.IsEnabled = true;
+                wsMenu.Items.Clear();
+                for (int i = 1; i <= WorkspaceManager.WorkspaceCount; i++)
+                {
+                    int ws = i;
+                    int count = WorkspaceManager.Instance.GetWorkspaceWindowCount(i);
+                    bool isCurrent = i == WorkspaceManager.Instance.CurrentWorkspace;
+                    var item = new MenuItem
+                    {
+                        Header = $"Workspace {i} ({count})",
+                        IsCheckable = true,
+                        IsChecked = isCurrent,
+                        IsEnabled = !isCurrent
+                    };
+                    item.Click += (_, _) => WorkspaceManager.Instance.SwitchToWorkspace(ws);
+                    wsMenu.Items.Add(item);
+                }
+            }
+        }
+
         private void TrayContextMenu_Opened(object sender, RoutedEventArgs e)
         {
             if (sender is not ContextMenu menu) return;
+            RefreshWorkspaceMenuItems(menu);
             SetBtopMenuItemVisibility(menu);
             _openTrayContextMenu = menu;
 
@@ -570,6 +652,21 @@ namespace RetroBar
             _trayContextMenuHook.Initialize();
 
             hotkeyManager.EscapeKeyDown += CloseTrayContextMenuOnEscape;
+        }
+
+        private static bool IsPointInsideMenuCascade(LowLevelMouseHook.POINT pt)
+        {
+            foreach (PresentationSource source in PresentationSource.CurrentSources)
+            {
+                if (source is HwndSource hwndSource
+                    && source.RootVisual?.GetType().Name == "PopupRoot")
+                {
+                    NativeMethods.GetWindowRect(hwndSource.Handle, out NativeMethods.Rect r);
+                    if (pt.X >= r.Left && pt.X <= r.Right && pt.Y >= r.Top && pt.Y <= r.Bottom)
+                        return true;
+                }
+            }
+            return false;
         }
 
         private void OnTrayContextMenuMouseEvent(object sender, LowLevelMouseHook.LowLevelMouseEventArgs args)
@@ -582,11 +679,8 @@ namespace RetroBar
 
             try
             {
-                if (PresentationSource.FromVisual(menu) is not HwndSource menuSource) return;
-
-                NativeMethods.GetWindowRect(menuSource.Handle, out NativeMethods.Rect rect);
                 var pt = args.HookStruct.pt;
-                bool inside = pt.X >= rect.Left && pt.X <= rect.Right && pt.Y >= rect.Top && pt.Y <= rect.Bottom;
+                bool inside = IsPointInsideMenuCascade(pt);
                 if (!inside)
                 {
                     Dispatcher.BeginInvoke(() => { if (menu.IsOpen) menu.IsOpen = false; });
@@ -616,6 +710,7 @@ namespace RetroBar
         {
             if (sender is ContextMenu menu)
             {
+                RefreshWorkspaceMenuItems(menu);
                 SetBtopMenuItemVisibility(menu);
                 _openTrayContextMenu = menu;
 

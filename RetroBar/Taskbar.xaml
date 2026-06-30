@@ -91,6 +91,8 @@
             <GroupBox Style="{DynamicResource Tray}">
                 <GroupBox.ContextMenu>
                     <ContextMenu Opened="TrayContextMenu_Opened" Closed="TrayContextMenu_Closed">
+                        <MenuItem Header="Workspaces" Tag="workspace-switcher" />
+                        <Separator Tag="workspace-sep" />
                         <!--StaticResourceExtension ResourceKey="ToolbarsItem" />
                         <Separator /-->
                         <StaticResourceExtension ResourceKey="SetTimeMenuItem" />
@@ -139,6 +141,8 @@
     </ContentControl>
     <appbar:AppBarWindow.ContextMenu>
         <ContextMenu Opened="ContextMenu_Opened" Closed="TrayContextMenu_Closed">
+            <MenuItem Header="Workspaces" Tag="workspace-switcher" />
+            <Separator Tag="workspace-sep" />
             <!-- TODO: Add when desk bands and additional taskbars are supported. -->
             <!--StaticResourceExtension ResourceKey="ToolbarsItem" />
             <Separator /-->

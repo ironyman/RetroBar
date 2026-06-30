@@ -71,6 +71,7 @@ namespace RetroBar
 
             _dictionaryManager.SetLanguageFromSettings();
             loadTheme();
+            WorkspaceManager.Instance.Initialize(_shellManager.TasksService.Windows);
             _windowManager = new WindowManager(_dictionaryManager, _explorerMonitor, _shellManager, _startMenuMonitor, _updater, _hotkeyManager);
             _networkTrayIcon = new NetworkTrayIcon();
         }

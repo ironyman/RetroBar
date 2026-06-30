@@ -32,6 +32,7 @@ namespace RetroBar.Utilities
         private const int WM_SYSKEYUP = 0x0105;
         private const int VK_LWIN = 0x5B;
         private const int VK_RWIN = 0x5C;
+        private const int VK_SHIFT = 0x10;
         // F23 (0x86) is used as the Start-menu mask key instead of VK_CONTROL to avoid
         // triggering apps that react to Ctrl. F24 is registered with RegisterHotKey so the
         // kernel dispatches WM_HOTKEY for Win+F24, which marks Win as "used as a modifier".
@@ -51,19 +52,12 @@ namespace RetroBar.Utilities
             public UIntPtr dwExtraInfo;
         }
 
-        public event Action FocusTrayRequested;
-        public event Action ShowDesktopRequested;
+        public event Action SwitchToFirstWorkspaceRequested;
         public event Action EscapeKeyDown;
-
-        /// <summary>
-        /// When true, Win+B is handled via RegisterHotKey and the hook should not intercept it.
-        /// </summary>
-        public bool IgnoreBKey { get; set; }
 
         private IntPtr _hook = IntPtr.Zero;
         private readonly LowLevelKeyboardProcDelegate _hookDelegate;
-        private bool _blockNextBUp;
-        private bool _blockNextDUp;
+        private bool _blockNextF1Up;
         private bool _winChordIntercepted;
 
         public LowLevelKeyboardHook()
@@ -88,6 +82,8 @@ namespace RetroBar.Utilities
         private bool IsWinKeyDown() =>
             (GetAsyncKeyState(VK_LWIN) & 0x8000) != 0 || (GetAsyncKeyState(VK_RWIN) & 0x8000) != 0;
 
+        private bool IsShiftDown() => (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
+
         private IntPtr KeyboardHookProc(int code, IntPtr wParam, IntPtr lParam)
         {
             if (code >= 0)
@@ -105,22 +101,15 @@ namespace RetroBar.Utilities
                     }
                     if (!isInjected && IsWinKeyDown())
                     {
-                        if (vk == (uint)VK.KEY_B)
+                        // Win+F1 is reserved by the OS to launch Windows Help ("Get Help"). That
+                        // reservation sits below the RegisterHotKey/WM_HOTKEY layer, so the only
+                        // reliable way to repurpose it (switch to workspace 1) is to swallow the
+                        // keystroke here before the shell sees it. Win+Shift+F1 (move window to
+                        // workspace 1) is not reserved and stays on RegisterHotKey.
+                        if (vk == (uint)VK.F1 && !IsShiftDown())
                         {
-                            // Always block so sihost's hook (earlier registration = later in LIFO
-                            // chain) never sees Win+B and cannot show its notification-area overlay.
-                            // Only fire the event when RegisterHotKey didn't succeed; otherwise
-                            // WM_HOTKEY delivers the action independently.
-                            if (!IgnoreBKey)
-                                FocusTrayRequested?.Invoke();
-                            _blockNextBUp = true;
-                            _winChordIntercepted = true;
-                            return (IntPtr)1;
-                        }
-                        if (vk == (uint)VK.KEY_D)
-                        {
-                            ShowDesktopRequested?.Invoke();
-                            _blockNextDUp = true;
+                            SwitchToFirstWorkspaceRequested?.Invoke();
+                            _blockNextF1Up = true;
                             _winChordIntercepted = true;
                             return (IntPtr)1;
                         }
@@ -128,14 +117,9 @@ namespace RetroBar.Utilities
                 }
                 else if (msg == WM_KEYUP || msg == WM_SYSKEYUP)
                 {
-                    if (vk == (uint)VK.KEY_B && _blockNextBUp)
+                    if (vk == (uint)VK.F1 && _blockNextF1Up)
                     {
-                        _blockNextBUp = false;
-                        return (IntPtr)1;
-                    }
-                    if (vk == (uint)VK.KEY_D && _blockNextDUp)
-                    {
-                        _blockNextDUp = false;
+                        _blockNextF1Up = false;
                         return (IntPtr)1;
                     }
 
