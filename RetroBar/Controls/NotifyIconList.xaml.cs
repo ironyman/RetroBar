@@ -143,6 +143,16 @@ namespace RetroBar.Controls
                 e.PropertyName == nameof(Settings.NotifyIconOrderHide) ||
                 e.PropertyName == nameof(Settings.NotifyIconBehaviors))
             {
+                // Refreshing here tears down and regenerates every icon container, which drops
+                // the mouse capture a live drag is holding and ends it prematurely. Defer until
+                // the drag commits (see FlushPendingIconListUpdates).
+                if (_isIconDragging)
+                {
+                    _pendingCollectionRefresh = true;
+                    _pendingDisplayItemsRebuild = true;
+                    return;
+                }
+
                 _allUserIcons?.Refresh();
                 _pinnedUserIcons?.Refresh();
                 SetToggleVisibility();
@@ -408,6 +418,14 @@ namespace RetroBar.Controls
         {
             Dispatcher.BeginInvoke(new Action(() =>
             {
+                // Same reasoning as Settings_PropertyChanged: don't tear down containers
+                // out from under an in-progress drag.
+                if (_isIconDragging)
+                {
+                    _pendingDisplayItemsRebuild = true;
+                    return;
+                }
+
                 SetToggleVisibility();
                 RebuildDisplayItems();
             }));
@@ -457,6 +475,8 @@ namespace RetroBar.Controls
         private int _iconDragToIndex;
         private readonly Dictionary<ContentPresenter, Point> _iconDragSiblingTargets = new();
         private TrayIcon _iconBeingDragged;
+        private bool _pendingCollectionRefresh;
+        private bool _pendingDisplayItemsRebuild;
 
         public bool IsDraggingIcon => _isIconDragging;
 
@@ -506,7 +526,10 @@ namespace RetroBar.Controls
             if (!_isIconDragging)
                 return;
 
-            bool horizontal = Host?.Orientation != System.Windows.Controls.Orientation.Vertical;
+            // Use the WrapPanel's own flow orientation, not the taskbar's screen-edge orientation:
+            // with RowCount > 1 on a horizontal taskbar, IconListOrientation flips the panel to
+            // flow vertically (columns) even though Host.Orientation stays Horizontal.
+            bool horizontal = _iconDragPanel.Orientation == System.Windows.Controls.Orientation.Horizontal;
             Vector delta = e.GetPosition(_iconDragPanel) - _iconDragStartPanelPoint;
 
             var draggedTransform = GetIconTranslate(_iconDragContainer);
@@ -711,6 +734,27 @@ namespace RetroBar.Controls
             _iconDragPanel = null;
             _iconDragSiblingTargets.Clear();
             _iconBeingDragged = null;
+
+            FlushPendingIconListUpdates();
+        }
+
+        // Runs any collection refresh/rebuild that was deferred while a drag was in progress
+        // (see Settings_PropertyChanged / AllUserIcons_CollectionChanged).
+        private void FlushPendingIconListUpdates()
+        {
+            if (_pendingCollectionRefresh)
+            {
+                _pendingCollectionRefresh = false;
+                _allUserIcons?.Refresh();
+                _pinnedUserIcons?.Refresh();
+            }
+
+            if (_pendingDisplayItemsRebuild)
+            {
+                _pendingDisplayItemsRebuild = false;
+                SetToggleVisibility();
+                RebuildDisplayItems();
+            }
         }
 
         private static bool IsOutsideTaskbarWindow(Window window)
