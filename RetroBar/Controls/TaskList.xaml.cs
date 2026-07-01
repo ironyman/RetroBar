@@ -539,6 +539,40 @@ namespace RetroBar.Controls
             UpdateGroupVisuals();
         }
 
+        // Returns the windows belonging to the same group as the given window.
+        public List<ApplicationWindow> GetGroupWindows(ApplicationWindow window)
+        {
+            var group = GetGroupForWindow(window);
+            if (group == null) return new List<ApplicationWindow> { window };
+            return new List<ApplicationWindow>(group.Windows);
+        }
+
+        // Collapses the group containing the given window.
+        public void CollapseGroup(ApplicationWindow window)
+        {
+            if (window == null) return;
+            var group = GetGroupForWindow(window);
+            if (group == null) return;
+            group.IsCollapsed = true;
+            UpdateGroupVisuals();
+        }
+
+        // Collapses all task groups.
+        public void CollapseAllGroups()
+        {
+            foreach (var group in _taskGroups)
+                group.IsCollapsed = true;
+            UpdateGroupVisuals();
+        }
+
+        // Uncollapses all task groups.
+        public void UncollapseAllGroups()
+        {
+            foreach (var group in _taskGroups)
+                group.IsCollapsed = false;
+            UpdateGroupVisuals();
+        }
+
         private void StartGroupHover(int targetIndex)
         {
             _groupHoverTargetIndex = targetIndex;

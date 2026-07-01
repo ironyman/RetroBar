@@ -125,6 +125,9 @@ namespace RetroBar.Controls
             RemoveFromGroupMenuItem.Visibility = vis;
             RemoveGroupMenuItem.Visibility = vis;
             GroupNewColorMenuItem.Visibility = vis;
+            CollapseGroupMenuItem.Visibility = vis;
+            CollapseAllMenuItem.Visibility = vis;
+            UncollapseAllMenuItem.Visibility = vis;
         }
 
         private void Window_GetButtonRect(ref NativeMethods.ShortRect rect)
@@ -201,6 +204,7 @@ namespace RetroBar.Controls
             SizeMenuItem.IsEnabled = wss == NativeMethods.WindowShowStyle.ShowNormal && (ws & (int)NativeMethods.WindowStyles.WS_MAXIMIZEBOX) != 0;
 
             SendToWorkspaceMenuItem.Items.Clear();
+            var groupWindows = Host?.GetGroupWindows(Window) ?? new System.Collections.Generic.List<ApplicationWindow> { Window };
             for (int i = 1; i <= Utilities.WorkspaceManager.WorkspaceCount; i++)
             {
                 int wsNum = i;
@@ -213,7 +217,11 @@ namespace RetroBar.Controls
                     IsChecked = isWindowHere,
                     IsEnabled = !isWindowHere
                 };
-                wsItem.Click += (_, _) => Utilities.WorkspaceManager.Instance.MoveWindowToWorkspace(Window.Handle, wsNum);
+                wsItem.Click += (_, _) =>
+                {
+                    foreach (var w in groupWindows)
+                        Utilities.WorkspaceManager.Instance.MoveWindowToWorkspace(w.Handle, wsNum);
+                };
                 SendToWorkspaceMenuItem.Items.Add(wsItem);
             }
 
@@ -299,6 +307,21 @@ namespace RetroBar.Controls
         private void GroupNewColorMenuItem_OnClick(object sender, RoutedEventArgs e)
         {
             Host?.ChangeGroupColor(Window);
+        }
+
+        private void CollapseGroupMenuItem_OnClick(object sender, RoutedEventArgs e)
+        {
+            Host?.CollapseGroup(Window);
+        }
+
+        private void CollapseAllMenuItem_OnClick(object sender, RoutedEventArgs e)
+        {
+            Host?.CollapseAllGroups();
+        }
+
+        private void UncollapseAllMenuItem_OnClick(object sender, RoutedEventArgs e)
+        {
+            Host?.UncollapseAllGroups();
         }
 
         private void AlwaysOnTopMenuItem_OnClick(object sender, RoutedEventArgs e)

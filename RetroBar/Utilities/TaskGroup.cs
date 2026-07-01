@@ -10,6 +10,7 @@ namespace RetroBar.Utilities
         private static readonly Random _random = new Random();
 
         public Color GroupColor { get; set; }
+        public bool IsCollapsed { get; set; }
         public List<ApplicationWindow> Windows { get; } = new List<ApplicationWindow>();
 
         public TaskGroup() : this(RandomColor()) { }

@@ -1,4 +1,4 @@
-﻿<UserControl x:Class="RetroBar.Controls.TaskButton"
+<UserControl x:Class="RetroBar.Controls.TaskButton"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:converters="clr-namespace:RetroBar.Converters"
@@ -99,6 +99,18 @@
                 <MenuItem Header="{DynamicResource group_new_color}"
                           Click="GroupNewColorMenuItem_OnClick"
                           Name="GroupNewColorMenuItem"
+                          Visibility="Collapsed" />
+                <MenuItem Header="{DynamicResource collapse_group}"
+                          Click="CollapseGroupMenuItem_OnClick"
+                          Name="CollapseGroupMenuItem"
+                          Visibility="Collapsed" />
+                <MenuItem Header="{DynamicResource collapse_all}"
+                          Click="CollapseAllMenuItem_OnClick"
+                          Name="CollapseAllMenuItem"
+                          Visibility="Collapsed" />
+                <MenuItem Header="{DynamicResource uncollapse_all}"
+                          Click="UncollapseAllMenuItem_OnClick"
+                          Name="UncollapseAllMenuItem"
                           Visibility="Collapsed" />
                 <Separator />
                 <MenuItem Header="Send to workspace"

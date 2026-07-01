@@ -139,5 +139,15 @@ namespace RetroBar.Utilities
             // are hidden and have been dropped from the shell's collection.
             return _windowWorkspaces.Count(kvp => kvp.Value == workspace && IsWindow(kvp.Key));
         }
+
+        public void ShowAllWindows()
+        {
+            foreach (var hwnd in _hiddenByUs.ToList())
+            {
+                _hiddenByUs.Remove(hwnd);
+                if (IsWindow(hwnd))
+                    SetWindowVisible(hwnd, true);
+            }
+        }
     }
 }

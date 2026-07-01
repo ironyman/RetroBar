@@ -651,8 +651,8 @@ if ($OpenLog) {
         Write-Warning "No log file found in: $logDir (RetroBar may not have been run yet)"
         exit 1
     }
-    $editor = if (Get-Command zed -ErrorAction SilentlyContinue) { 'zed' }
-              elseif (Get-Command code -ErrorAction SilentlyContinue) { 'code' }
+    $editor = if (Get-Command code -ErrorAction SilentlyContinue) { 'code' }
+              elseif (Get-Command zed -ErrorAction SilentlyContinue) { 'zed' }
               elseif (Get-Command code-insiders -ErrorAction SilentlyContinue) { 'code-insiders' }
               else { $null }
     if ($editor) {

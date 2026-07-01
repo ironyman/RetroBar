@@ -12,6 +12,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
+using ManagedShell.Common.Logging;
 using ManagedShell.Interop;
 using ManagedShell.WindowsTray;
 using RetroBar.Extensions;
@@ -146,7 +147,7 @@ namespace RetroBar.Controls
                 // Refreshing here tears down and regenerates every icon container, which drops
                 // the mouse capture a live drag is holding and ends it prematurely. Defer until
                 // the drag commits (see FlushPendingIconListUpdates).
-                if (_isIconDragging)
+                if (_isIconDragging || _isCommittingDrag)
                 {
                     _pendingCollectionRefresh = true;
                     _pendingDisplayItemsRebuild = true;
@@ -299,23 +300,61 @@ namespace RetroBar.Controls
 
         private void RebuildDisplayItems()
         {
-            _displayItems.Clear();
+            // Build the desired order offline, then diff against the existing
+            // _displayItems collection and apply minimal Move/Remove/Add ops.
+            // This avoids tearing down every container (which causes a black flash).
+            var desired = new List<object>();
 
-            // Two passes grouped by behavior: new icons not yet in any order list sort to the end
-            // of _allUserIcons, so a single-pass separator insertion would put them on the wrong
-            // side. HideWhenInactive icons go before the separator, everything else after.
             foreach (TrayIcon icon in _allUserIcons)
             {
                 if (icon.GetBehavior() == NotifyIconBehavior.HideWhenInactive)
-                    _displayItems.Add(icon);
+                    desired.Add(icon);
             }
 
-            _displayItems.Add(SeparatorPlaceholder.Instance);
+            desired.Add(SeparatorPlaceholder.Instance);
 
             foreach (TrayIcon icon in _allUserIcons)
             {
                 if (icon.GetBehavior() != NotifyIconBehavior.HideWhenInactive)
-                    _displayItems.Add(icon);
+                    desired.Add(icon);
+            }
+
+            // Fast path: same items in same order — nothing to do.
+            if (desired.Count == _displayItems.Count)
+            {
+                bool same = true;
+                for (int i = 0; i < desired.Count; i++)
+                {
+                    if (!ReferenceEquals(desired[i], _displayItems[i]))
+                    { same = false; break; }
+                }
+                if (same) return;
+            }
+
+            // Remove items not in desired (back-to-front to keep indices stable).
+            for (int i = _displayItems.Count - 1; i >= 0; i--)
+            {
+                if (!desired.Contains(_displayItems[i]))
+                    _displayItems.RemoveAt(i);
+            }
+
+            // Move existing items into correct positions, then add any new ones.
+            int write = 0;
+            for (int i = 0; i < desired.Count; i++)
+            {
+                object item = desired[i];
+                int curIdx = _displayItems.IndexOf(item);
+                if (curIdx >= 0)
+                {
+                    if (curIdx != write)
+                        _displayItems.Move(curIdx, write);
+                    write++;
+                }
+                else
+                {
+                    _displayItems.Insert(write, item);
+                    write++;
+                }
             }
         }
 
@@ -416,16 +455,11 @@ namespace RetroBar.Controls
 
         private void AllUserIcons_CollectionChanged(object sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
         {
+            _pendingDisplayItemsRebuild = true;
             Dispatcher.BeginInvoke(new Action(() =>
             {
-                // Same reasoning as Settings_PropertyChanged: don't tear down containers
-                // out from under an in-progress drag.
-                if (_isIconDragging)
-                {
-                    _pendingDisplayItemsRebuild = true;
-                    return;
-                }
-
+                if (!_pendingDisplayItemsRebuild) return;
+                _pendingDisplayItemsRebuild = false;
                 SetToggleVisibility();
                 RebuildDisplayItems();
             }));
@@ -465,6 +499,7 @@ namespace RetroBar.Controls
         private const double IconDragSnapMs = 200;
 
         private bool _isIconDragging;
+        private bool _isCommittingDrag;
         private ContentPresenter _iconDragContainer;
         private WrapPanel _iconDragPanel;
         private Point _iconDragStartPanelPoint;
@@ -558,6 +593,9 @@ namespace RetroBar.Controls
 
             if (to != _iconDragToIndex)
             {
+                ShellLogger.Debug($"[DragUpdate] _iconDragToIndex {_iconDragToIndex} -> {to}  draggedCenter={draggedCenter:F1} half={half:F1}");
+                for (int dbg = 0; dbg < count; dbg++)
+                    ShellLogger.Debug($"  slot[{dbg}] center={IconSlotCenter(dbg, horizontal):F1}");
                 _iconDragToIndex = to;
                 LayoutIconDragSiblings();
             }
@@ -629,10 +667,16 @@ namespace RetroBar.Controls
             if (_iconDragContainers == null)
                 return;
 
+            _isCommittingDrag = true;
+
             int from = _iconDragFromIndex;
             int to = _iconDragToIndex;
             var draggedIcon = _iconBeingDragged;
             bool isDraggingSeparator = _iconDragContainer.DataContext is SeparatorPlaceholder;
+
+            ShellLogger.Debug($"[DragCommit] from={from} to={to} count={_iconDragContainers.Count} dragged={(draggedIcon?.GetStableIdentifier() ?? "null")} sepDrag={isDraggingSeparator} outside={droppedOutside}");
+            for (int dbg = 0; dbg < _iconDragContainers.Count; dbg++)
+                ShellLogger.Debug($"  container[{dbg}] dc={_iconDragContainers[dbg].DataContext?.GetType().Name} slot={_iconDragSlots[dbg]} size={_iconDragSizes[dbg]}");
 
             // Build the new visual order once — used in both branches below.
             var order = new List<int>(_iconDragContainers.Count);
@@ -688,6 +732,9 @@ namespace RetroBar.Controls
                 var pinnedOrder = new List<string>(Settings.Instance.NotifyIconOrderPinned);
                 var targetList = isNowOnPinnedSide ? pinnedOrder : hideOrder;
 
+                ShellLogger.Debug($"[DragCommit] side={(isNowOnPinnedSide ? "pinned" : "hide")} hideOrder=[{string.Join(",",hideOrder)}] pinnedOrder=[{string.Join(",",pinnedOrder)}]");
+                ShellLogger.Debug($"[DragCommit] order=[{string.Join(",",order)}] sepNewVis={sepNewVisualPos}");
+
                 // Find the first icon after the drop point that already belongs to the target list;
                 // insert before it so the drop position is honoured within that list.
                 TrayIcon neighbor = null;
@@ -698,6 +745,8 @@ namespace RetroBar.Controls
                     { neighbor = ni; break; }
                 }
 
+                ShellLogger.Debug($"[DragCommit] neighbor={(neighbor?.GetStableIdentifier() ?? "null")}");
+
                 // Remove from whichever list currently holds the icon, then insert into target.
                 hideOrder.Remove(draggedId);
                 pinnedOrder.Remove(draggedId);
@@ -707,6 +756,8 @@ namespace RetroBar.Controls
                 else
                     targetList.Add(draggedId);
 
+                ShellLogger.Debug($"[DragCommit] after: hideOrder=[{string.Join(",",hideOrder)}] pinnedOrder=[{string.Join(",",pinnedOrder)}]");
+
                 Settings.Instance.NotifyIconOrderHide = hideOrder;
                 Settings.Instance.NotifyIconOrderPinned = pinnedOrder;
 
@@ -715,6 +766,13 @@ namespace RetroBar.Controls
                     draggedIcon.SetBehavior(isNowOnPinnedSide ? NotifyIconBehavior.AlwaysShow : NotifyIconBehavior.HideWhenInactive);
             }
 
+            _isCommittingDrag = false;
+            FlushPendingIconListUpdates();
+
+            // Clear transforms AFTER the collection refresh. By this point
+            // RebuildDisplayItems has already torn down and recreated the
+            // containers, so these old ContentPresenters are detached from
+            // the visual tree and clearing them has no visible effect.
             foreach (var cp in _iconDragContainers)
             {
                 if (cp.RenderTransform is TranslateTransform t)
@@ -734,8 +792,6 @@ namespace RetroBar.Controls
             _iconDragPanel = null;
             _iconDragSiblingTargets.Clear();
             _iconBeingDragged = null;
-
-            FlushPendingIconListUpdates();
         }
 
         // Runs any collection refresh/rebuild that was deferred while a drag was in progress

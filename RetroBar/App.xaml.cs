@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using ManagedShell;
 using RetroBar.Utilities;
 using System.Windows;
@@ -171,6 +171,8 @@ namespace RetroBar
 
         private void ExitApp()
         {
+            WorkspaceManager.Instance.ShowAllWindows();
+
             Settings.Instance.PropertyChanged -= Settings_PropertyChanged;
 
             _networkTrayIcon?.Dispose();
