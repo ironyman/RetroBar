@@ -123,7 +123,10 @@ namespace RetroBar
 
         private ShellManager SetupManagedShell()
         {
-            EnvironmentHelper.IsAppRunningAsShell = NativeMethods.GetShellWindow() == IntPtr.Zero;
+            IntPtr shellWindow = NativeMethods.GetShellWindow();
+            EnvironmentHelper.IsAppRunningAsShell = shellWindow == IntPtr.Zero;
+            ShellLogger.Info($"App: GetShellWindow()=0x{shellWindow:X} -> IsAppRunningAsShell={EnvironmentHelper.IsAppRunningAsShell} (ExplorerHotkeyStealer waits for this to be non-zero after a relaunch, so 0x0 here normally only happens when no relaunch occurred, or its wait timed out - which wrongly concludes RetroBar is the shell and disables ExplorerHelper's hide-taskbar logic for the rest of the session)");
+            Utilities.ShellTrayWindowDiagnostics.LogShellTrayWindows("App.SetupManagedShell: before computing IsAppRunningAsShell");
 
             _logger = new ManagedShellLogger();
 
@@ -145,7 +148,9 @@ namespace RetroBar
 
             config.PinnedNotifyIcons = pinnedList.ToArray();
 
-            return new ShellManager(config);
+            ShellManager shellManager = new ShellManager(config);
+            Utilities.ShellTrayWindowDiagnostics.LogShellTrayWindows("App.SetupManagedShell: after ShellManager ctor (ManagedShell's own Shell_TrayWnd should now exist)");
+            return shellManager;
         }
 
         public void RestartApp()

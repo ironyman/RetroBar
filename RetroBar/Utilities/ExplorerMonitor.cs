@@ -40,6 +40,9 @@ namespace RetroBar.Utilities
             {
                 if (m.Msg == WM_TASKBARCREATEDMESSAGE)
                 {
+                    ShellLogger.Info($"ExplorerMonitor: Received TaskbarCreated; GetShellWindow()=0x{NativeMethods.GetShellWindow():X}, IsAppRunningAsShell={ManagedShell.Common.Helpers.EnvironmentHelper.IsAppRunningAsShell}");
+                    ShellTrayWindowDiagnostics.LogShellTrayWindows("ExplorerMonitor: on TaskbarCreated");
+
                     Dispatcher.CurrentDispatcher.BeginInvoke(() => {
                         try
                         {

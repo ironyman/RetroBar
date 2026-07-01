@@ -300,14 +300,15 @@ namespace RetroBar.Utilities
 
                     if (!IsBRegistered)
                     {
-                        // Last resort: something inside explorer.exe still owns Win+B and won't
-                        // release it via WMTRAY_UNREGISTERHOTKEY. Kill explorer, register while
-                        // nothing is alive to hold the hotkey, then relaunch it.
-                        ShellLogger.Info("HotkeyManager: Win+B still owned by explorer; killing and restarting it");
-                        ExplorerHotkeyStealer.StealWinBFromExplorer(() =>
-                        {
-                            IsBRegistered = RegisterWinKey(VK.KEY_B, HOTKEY_ID_FOCUS_TRAY);
-                        });
+                        // Win+B couldn't be registered via the normal path (soft-unregister +
+                        // RegisterHotKey). The early reservation in EarlyWinBReservation already
+                        // holds Win+B on its ReservationWindow. Release() above destroyed that
+                        // window and freed the hotkey, but sihost/explorer may have re-grabbed
+                        // it in the tiny gap. Do NOT kill and restart explorer here — doing so
+                        // while ManagedShell's Shell_TrayWnd exists causes explorer to open a
+                        // File Explorer browser window instead of becoming the desktop shell.
+                        // Accept that Win+B may not be registered and log it.
+                        ShellLogger.Warning("HotkeyManager: Win+B could not be registered; it may still be held by Explorer/sihost");
                     }
 
                     if (IsBRegistered) _registeredSystemHotkeys.Add(HOTKEY_ID_FOCUS_TRAY);
