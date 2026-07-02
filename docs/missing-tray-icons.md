@@ -16,3 +16,7 @@ Unable to get items using ITrayNotify: ... CLSID {25DEAD04-1EAC-4911-9E3A-AD0A4A
 That CLSID isn't registered on your machine, so the COM call throws — and because the actual tray-read call (GetTrayItems()) was inside the same try block, the exception skipped it entirely. Result: the whole pre-population step silently did nothing, so Wi-Fi and any other icon that was already running when RetroBar started never got imported. Icons from apps that launch after RetroBar still show up fine, since those go through the normal live Shell_NotifyIcon/TaskbarCreated path, unaffected by this bug.
 
 I've fixed it by decoupling the two: the COM auto-tray toggle now fails independently, while GetTrayItems() always runs regardless. I haven't rebuilt/restarted RetroBar yet since it's currently running (PID 23992) — want me to build and restart it now to verify the fix?
+
+The following conditions are required for RetroBar to resolve tray icons from explorer:
+1. Explorer must be running and setup. EarlyWinBReservation must restart explorer fully.
+2. RetroBar must run in medium integrity level. Do not run elevated.

@@ -233,39 +233,68 @@ namespace RetroBar.Controls
             var action = e.Action;
 
             // When a new window is inserted after its active parent (GroupAfterParent setting),
-            // make sure it doesn't land in the middle of the parent's task group.
+            // make sure it doesn't land in the middle of the parent's task group — if it lands
+            // anywhere inside a group's span, push it to right after that group's last member.
             if (action == System.Collections.Specialized.NotifyCollectionChangedAction.Add)
             {
-                if (e.NewItems != null && taskbarItems?.SourceCollection is ObservableCollection<ApplicationWindow> source)
+                if (e.NewItems != null)
                 {
-                    foreach (ApplicationWindow newWindow in e.NewItems)
-                    {
-                        int insertedIdx = source.IndexOf(newWindow);
-                        if (insertedIdx < 1) continue;
-
-                        var prevWindow = source[insertedIdx - 1];
-                        var group = GetGroupForWindow(prevWindow);
-                        if (group == null) continue;
-
-                        // Find the last consecutive group member that follows the insertion point.
-                        int lastGroupIdx = -1;
-                        for (int i = insertedIdx + 1; i < source.Count; i++)
-                        {
-                            if (source[i] is ApplicationWindow w && group.Windows.Contains(w))
-                                lastGroupIdx = i;
-                            else
-                                break;
-                        }
-
-                        if (lastGroupIdx >= 0)
-                            source.Move(insertedIdx, lastGroupIdx);
-                    }
+                    var newWindows = e.NewItems.OfType<ApplicationWindow>().ToList();
+                    // Deferred so this runs after WPF's own ItemsControl has finished reacting to
+                    // the Add notification — moving the collection again synchronously from inside
+                    // this handler races the container generator and can leave the new button's
+                    // container never generated (the button silently doesn't appear).
+                    Dispatcher.BeginInvoke(DispatcherPriority.Loaded, (Action)(() => FixupGroupSplitInsertions(newWindows)));
                 }
                 return;
             }
 
             // ObservableCollection.Move raises CollectionChanged with Action=Move and OldItems set,
             // but the window is not gone — only clean up groups for actual removals.
+            HandleGroupedWindowsRemovalOrReset(e);
+        }
+
+        // Relocates any newly added window that landed strictly inside an existing task group's
+        // span (by index) to right after that group's last member, so a fresh window can never
+        // visually split a group apart no matter how it was inserted.
+        private void FixupGroupSplitInsertions(List<ApplicationWindow> newWindows)
+        {
+            if (taskbarItems?.SourceCollection is not ObservableCollection<ApplicationWindow> source)
+                return;
+
+            foreach (var newWindow in newWindows)
+            {
+                int insertedIdx = source.IndexOf(newWindow);
+                if (insertedIdx < 0) continue;
+
+                foreach (var group in _taskGroups)
+                {
+                    if (group.Windows.Count < 2) continue;
+
+                    int minIdx = int.MaxValue, maxIdx = -1;
+                    foreach (var w in group.Windows)
+                    {
+                        int idx = source.IndexOf(w);
+                        if (idx < 0) continue;
+                        if (idx < minIdx) minIdx = idx;
+                        if (idx > maxIdx) maxIdx = idx;
+                    }
+
+                    if (maxIdx < 0 || insertedIdx <= minIdx || insertedIdx >= maxIdx) continue;
+
+                    // Landed strictly inside the group's span — move it to right after the group.
+                    // maxIdx is already the correct target: removing the new window from
+                    // insertedIdx (< maxIdx) shifts maxIdx down by one, and inserting "after" adds
+                    // one back.
+                    source.Move(insertedIdx, maxIdx);
+                    break;
+                }
+            }
+        }
+
+        private void HandleGroupedWindowsRemovalOrReset(System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+        {
+            var action = e.Action;
             if (action != System.Collections.Specialized.NotifyCollectionChangedAction.Remove &&
                 action != System.Collections.Specialized.NotifyCollectionChangedAction.Replace &&
                 action != System.Collections.Specialized.NotifyCollectionChangedAction.Reset)
@@ -732,6 +761,19 @@ namespace RetroBar.Controls
         // Index of the primary button within _dragGroupSorted.
         private int _dragGroupPrimaryOffset;
 
+        // The non-moving buttons, partitioned into "blocks": a run of members belonging to the
+        // same foreign task group is one indivisible block, everything else is its own singleton
+        // block. Swaps are evaluated a whole block at a time so a multi-button group is treated
+        // like one wide button rather than being crossed — and split apart — one member at a time.
+        //
+        // Reduced-order position (i.e. position among only the non-moving buttons) where each
+        // block begins; length is block count + 1, with the final entry being the total non-moving
+        // item count (the position just past the last block).
+        private List<int> _dragBlockStartPos = new List<int>();
+        // Current gap index: which block boundary the dragged block currently occupies.
+        // 0 = before all blocks, blockCount = after all.
+        private int _dragBlockGap;
+
         public bool IsDraggingButton => _isDragging;
 
         public void StartButtonDrag(TaskButton button, MouseEventArgs e)
@@ -781,11 +823,12 @@ namespace RetroBar.Controls
             _dragGroupSorted = new List<int>();
             _dragGroupPrimaryOffset = 0;
 
+            bool horizontal = Host?.Orientation != Orientation.Vertical;
+
             var draggedWindow = _dragContainer.DataContext as ApplicationWindow;
             var draggedGroup = draggedWindow != null ? GetGroupForWindow(draggedWindow) : null;
             if (draggedGroup != null && draggedGroup.Windows.Count > 1)
             {
-                bool horizontal = Host?.Orientation != Orientation.Vertical;
                 for (int i = 0; i < _dragContainers.Count; i++)
                 {
                     if (i == _dragFromIndex) continue;
@@ -801,7 +844,66 @@ namespace RetroBar.Controls
                     MainCoord(_dragSlots[a], horizontal).CompareTo(MainCoord(_dragSlots[b], horizontal)));
                 _dragGroupPrimaryOffset = _dragGroupSorted.IndexOf(_dragFromIndex);
             }
+
+            ComputeDragBlocks();
         }
+
+        // Partitions the non-moving buttons into blocks: a run of members belonging to the same
+        // foreign task group travels as one indivisible block, everything else is its own singleton
+        // block. Swaps are then evaluated against a whole block at once, so a multi-button group is
+        // treated like one wide button rather than being crossed — and split apart — one member at
+        // a time.
+        private void ComputeDragBlocks()
+        {
+            var movingIndices = _dragGroupSorted.Count > 0
+                ? new HashSet<int>(_dragGroupSorted)
+                : new HashSet<int> { _dragFromIndex };
+
+            var blocks = new List<List<int>>();
+            TaskGroup currentGroup = null;
+
+            for (int i = 0; i < _dragContainers.Count; i++)
+            {
+                if (movingIndices.Contains(i)) continue;
+
+                var window = _dragContainers[i].DataContext as ApplicationWindow;
+                var group = window != null ? GetGroupForWindow(window) : null;
+
+                if (group != null && ReferenceEquals(group, currentGroup))
+                {
+                    blocks[blocks.Count - 1].Add(i);
+                }
+                else
+                {
+                    blocks.Add(new List<int> { i });
+                    currentGroup = group;
+                }
+            }
+
+            _dragBlockStartPos = new List<int>(blocks.Count + 1) { 0 };
+            int pos = 0;
+
+            foreach (var block in blocks)
+            {
+                pos += block.Count;
+                _dragBlockStartPos.Add(pos);
+            }
+
+            int primaryOffset = _dragGroupSorted.Count > 0 ? _dragGroupPrimaryOffset : 0;
+            int initialPos = _dragFromIndex - primaryOffset;
+
+            int gap = _dragBlockStartPos.IndexOf(initialPos);
+            if (gap < 0)
+            {
+                // The dragged item's own starting position doesn't line up with a block boundary —
+                // only possible if a group was already split before this drag began. Snap forward
+                // to the next boundary as a best-effort recovery.
+                gap = 0;
+                while (gap < _dragBlockStartPos.Count - 1 && _dragBlockStartPos[gap] < initialPos) gap++;
+            }
+            _dragBlockGap = gap;
+        }
+
 
         public void UpdateButtonDrag(MouseEventArgs e)
         {
@@ -844,38 +946,72 @@ namespace RetroBar.Controls
                 }
             }
 
-            // Step the gap one slot at a time. A swap triggers once the dragged button's leading
-            // edge (in the direction of travel) passes the midpoint of the neighbouring button as
-            // it is currently displayed, which is symmetric for both directions.
-            double draggedCenter = MainCoord(_dragSlots[_dragFromIndex], horizontal)
-                                   + MainSize(_dragSizes[_dragFromIndex], horizontal) / 2
-                                   + (horizontal ? delta.X : delta.Y);
-            double half = MainSize(_dragSizes[_dragFromIndex], horizontal) / 2;
+            // The dragged block and the neighbouring block are always adjacent in display order, so
+            // together they span one combined range. A swap fires when the dragged block's midpoint
+            // crosses the midpoint of that combined span. The combined span occupies the same total
+            // extent whether or not the pair has swapped, so its midpoint is invariant under the
+            // swap — the forward and reverse thresholds are the exact same line. Crossing it swaps
+            // once; only re-crossing that same line swaps back. There is no threshold band at all
+            // and no feedback (thresholds derive from static slot geometry, not animated
+            // positions), so no hysteresis and no back-and-forth fighting is possible. This holds
+            // for any dragged-block width against any target-block width.
+            double deltaMain = horizontal ? delta.X : delta.Y;
 
-            int to = _dragToIndex;
-            int count = _dragContainers.Count;
+            int moving = _dragGroupSorted.Count > 0 ? _dragGroupSorted.Count : 1;
+            int movingFirst = _dragGroupSorted.Count > 0 ? _dragGroupSorted[0] : _dragFromIndex;
+            int movingLast = _dragGroupSorted.Count > 0 ? _dragGroupSorted[_dragGroupSorted.Count - 1] : _dragFromIndex;
 
-            // Clamp so that for a group block the whole block stays within [0, count-1].
-            // For a single button, this reduces to the original [0, count-1] bounds.
-            int toMin, toMax;
-            if (_dragGroupSorted.Count > 0)
+            double draggedCenter = (MainCoord(_dragSlots[movingFirst], horizontal)
+                                    + MainCoord(_dragSlots[movingLast], horizontal)
+                                    + MainSize(_dragSizes[movingLast], horizontal)) / 2.0 + deltaMain;
+
+            int gap = _dragBlockGap;
+            int blockCount = _dragBlockStartPos.Count - 1;
+
+            while (true)
             {
-                int gs = _dragGroupSorted.Count;
-                toMin = _dragGroupPrimaryOffset;
-                toMax = count - gs + _dragGroupPrimaryOffset;
+                // The hole (the dragged block's current home) spans visual slots
+                // [holeFirst, holeFirst + moving - 1].
+                int holeFirst = _dragBlockStartPos[gap];
+
+                if (gap < blockCount)
+                {
+                    // Combined span: hole plus the next block (displaced past the hole, so its
+                    // buttons occupy visual slots offset by the moving count).
+                    int lastSlot = _dragBlockStartPos[gap + 1] - 1 + moving;
+                    double leading = MainCoord(_dragSlots[holeFirst], horizontal);
+                    double trailing = MainCoord(_dragSlots[lastSlot], horizontal)
+                                      + MainSize(_dragSizes[lastSlot], horizontal);
+                    if (draggedCenter > (leading + trailing) / 2.0)
+                    {
+                        gap++;
+                        continue;
+                    }
+                }
+
+                if (gap > 0)
+                {
+                    // Combined span: the previous block (at its unshifted slots) plus the hole.
+                    int firstSlot = _dragBlockStartPos[gap - 1];
+                    int holeLast = holeFirst + moving - 1;
+                    double leading = MainCoord(_dragSlots[firstSlot], horizontal);
+                    double trailing = MainCoord(_dragSlots[holeLast], horizontal)
+                                      + MainSize(_dragSizes[holeLast], horizontal);
+                    if (draggedCenter < (leading + trailing) / 2.0)
+                    {
+                        gap--;
+                        continue;
+                    }
+                }
+
+                break;
             }
-            else
-            {
-                toMin = 0;
-                toMax = count - 1;
-            }
 
-            while (to < toMax && draggedCenter + half > SlotCenter(to + 1, horizontal)) to++;
-            while (to > toMin && draggedCenter - half < SlotCenter(to - 1, horizontal)) to--;
-
-            if (to != _dragToIndex)
+            if (gap != _dragBlockGap)
             {
-                _dragToIndex = to;
+                _dragBlockGap = gap;
+                int primaryOffset = _dragGroupSorted.Count > 0 ? _dragGroupPrimaryOffset : 0;
+                _dragToIndex = _dragBlockStartPos[gap] + primaryOffset;
                 LayoutDragSiblings(horizontal);
             }
 
@@ -904,9 +1040,6 @@ namespace RetroBar.Controls
                 }
             }
         }
-
-        private double SlotCenter(int slot, bool horizontal)
-            => MainCoord(_dragSlots[slot], horizontal) + MainSize(_dragSizes[slot], horizontal) / 2;
 
         public void EndButtonDrag()
         {
@@ -1128,6 +1261,8 @@ namespace RetroBar.Controls
             _dragGroupMemberIndices = new List<int>();
             _dragGroupSorted = new List<int>();
             _dragGroupPrimaryOffset = 0;
+            _dragBlockStartPos = new List<int>();
+            _dragBlockGap = 0;
 
             // Reapply group visuals after layout settles (collection moves may recycle containers).
             Dispatcher.BeginInvoke(DispatcherPriority.Loaded, (Action)ApplyGroupVisuals);
