@@ -142,6 +142,7 @@ param(
     [string]$Verbosity = 'minimal',
 
     [switch]$Background,
+    [switch]$Status,
     [switch]$Stop,
     [switch]$Relaunch,
     [switch]$NoRebuild,
@@ -221,14 +222,60 @@ function Invoke-Build([string[]]$targets, [string]$cfg, [string]$fw, [string]$ve
     Write-Host "`nAll targets built successfully." -ForegroundColor Green
 }
 
+function Find-RetroBarExe([string]$cfg, [string]$fw) {
+    # dotnet build output depends on SDK version and implicit Platform resolution:
+    #   - Older SDKs / Visual Studio may default to x64 → bin\x64\<cfg>\<fw>\
+    #   - SDK 10+ with <Platforms>AnyCPU;... defaults to AnyCPU → bin\<cfg>\<fw>\
+    # Check both locations and prefer whichever DLL was built most recently.
+    $candidates = @(
+        (Join-Path $Root "RetroBar\bin\x64\$cfg\$fw\RetroBar.exe"),
+        (Join-Path $Root "RetroBar\bin\$cfg\$fw\RetroBar.exe")
+    )
+    $found = @()
+    foreach ($candidate in $candidates) {
+        if (Test-Path $candidate) { $found += $candidate }
+    }
+    if ($found.Count -eq 0) { return $null }
+    if ($found.Count -eq 1) { return $found[0] }
+    $newest = $found | Sort-Object { (Get-Item $_).LastWriteTime } -Descending | Select-Object -First 1
+    return $newest
+}
+
 function Start-RetroBar([string]$cfg, [string]$fw) {
-    $exe = Join-Path $Root "RetroBar\bin\$cfg\$fw\RetroBar.exe"
-    if (-not (Test-Path $exe)) {
-        Write-Warning "RetroBar.exe not found at: $exe"
+    $exe = Find-RetroBarExe $cfg $fw
+    if (-not $exe) {
+        Write-Warning "RetroBar.exe not found in bin\x64\$cfg\$fw or bin\$cfg\$fw"
         return
     }
     Start-Process $exe
     Write-Host "RetroBar launched: $exe" -ForegroundColor Green
+}
+
+function Get-NewestRetroBarSourceTime {
+    # Newest LastWriteTime among the .cs sources that feed RetroBar.exe and its ManagedShell
+    # dependencies. Compared against a running binary's on-disk timestamp to flag a stale copy -
+    # e.g. a launcher pointed at a build output folder that a given build step never actually
+    # writes to, so successive rebuilds silently never reach what's running.
+    $roots = @(
+        (Join-Path $Root 'RetroBar')
+        (Join-Path $Root 'ManagedShell\src')
+    )
+    Get-ChildItem $roots -Recurse -Include '*.cs' -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -notmatch '\\(bin|obj)\\' } |
+        Measure-Object -Property LastWriteTime -Maximum |
+        ForEach-Object { $_.Maximum }
+}
+
+function Write-RetroBarStalenessCheck ([string]$LoadedPath, [string]$CanonicalPath, [datetime]$NewestSource) {
+    if (-not $LoadedPath) { return }
+    if ($CanonicalPath -and ($LoadedPath -ine $CanonicalPath)) {
+        Write-Host "    [MISMATCH] loaded from a different path than the current build output ($CanonicalPath)" -ForegroundColor Red
+        return
+    }
+    $loadedTime = (Get-Item $LoadedPath -ErrorAction SilentlyContinue).LastWriteTime
+    if ($loadedTime -and $NewestSource -and $loadedTime -lt $NewestSource) {
+        Write-Host "    [STALE] binary is older ($loadedTime) than the newest source edit ($NewestSource) - rebuild hasn't been picked up" -ForegroundColor Red
+    }
 }
 
 function Start-LogTail {
@@ -489,10 +536,10 @@ function Set-DebuggerRegistry {
     param([ValidateSet('devenv', 'vsjit')][string]$DebuggerType = 'devenv')
 
     $ifeoPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\RetroBar.exe'
-    $exe = Join-Path $Root 'RetroBar\bin\Debug\net6.0-windows10.0.19041.0\RetroBar.exe'
+    $exe = Find-RetroBarExe 'Debug' 'net6.0-windows10.0.19041.0'
 
-    if (-not (Test-Path $exe)) {
-        Write-Warning "RetroBar.exe not found at: $exe`nBuild first with: .\build.ps1"
+    if (-not $exe) {
+        Write-Warning "RetroBar.exe not found under RetroBar\bin\x64\Debug or RetroBar\bin\Debug.`nBuild first with: .\build.ps1"
         return
     }
 
@@ -584,6 +631,27 @@ function Remove-DebuggerRegistry {
     }
 }
 
+function Get-ExeArchitecture {
+    param([string]$Path)
+
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+
+    # PE header offset is at 0x3C
+    $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+
+    # Machine field is 4 bytes after PE header start
+    $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+
+    switch ($machine) {
+        0x014c { "x86 (32-bit)" }
+        0x8664 { "x64 (64-bit)" }
+        0xAA64 { "ARM64" }
+        default { "Unknown: 0x{0:X}" -f $machine }
+    }
+}
+
+
+
 # ---------------------------------------------------------------------------
 # Entry points
 # ---------------------------------------------------------------------------
@@ -610,6 +678,45 @@ if ($SetupVsjit) {
 
 if ($RemoveDebugger) {
     Remove-DebuggerRegistry
+    exit 0
+}
+
+if ($Status) {
+    $canonicalExe = Find-RetroBarExe $Configuration $Framework
+    $canonicalDir = if ($canonicalExe) { Split-Path $canonicalExe -Parent } else { $null }
+    $newestSource = Get-NewestRetroBarSourceTime
+
+    Write-Host ""
+    Write-Host "Current build output: $(if ($canonicalExe) { $canonicalExe } else { '[NOT BUILT]' })" -ForegroundColor Cyan
+    Write-Host "Newest source edit  : $newestSource" -ForegroundColor Cyan
+    Write-Host ""
+
+    $procs = Get-Process -Name RetroBar -ErrorAction SilentlyContinue
+    if (-not $procs) {
+        Write-Host "RetroBar is not running." -ForegroundColor DarkGray
+        exit 0
+    }
+
+    foreach ($proc in $procs) {
+        Write-Host "RetroBar (PID $($proc.Id)):" -ForegroundColor Green
+        Write-Host "  Path: $($proc.Path)"
+        Write-Host "  Started: $($proc.StartTime)"
+        Write-RetroBarStalenessCheck -LoadedPath $proc.Path -CanonicalPath $canonicalExe -NewestSource $newestSource
+
+        # Also check the loaded ManagedShell.AppBar.dll specifically, since that's a separate
+        # assembly copied alongside RetroBar.exe and can go stale independently of the exe itself.
+        try {
+            $appBarModule = $proc.Modules | Where-Object { $_.ModuleName -ieq 'ManagedShell.AppBar.dll' } | Select-Object -First 1
+            if ($appBarModule) {
+                $canonicalAppBar = if ($canonicalDir) { Join-Path $canonicalDir 'ManagedShell.AppBar.dll' } else { $null }
+                Write-Host "  ManagedShell.AppBar.dll: $($appBarModule.FileName)"
+                Write-RetroBarStalenessCheck -LoadedPath $appBarModule.FileName -CanonicalPath $canonicalAppBar -NewestSource $newestSource
+            }
+        } catch {
+            Write-Host "  (could not enumerate modules - access denied)" -ForegroundColor DarkGray
+        }
+        Write-Host ""
+    }
     exit 0
 }
 
@@ -696,6 +803,9 @@ if ($Uninstall -or $UninstallRelease) {
 }
 
 if ($Relaunch) {
+    if ((gps explorer -ea ignore).Count -eq 1) {
+        Write-Host "Explorer is running PID: $((gps explorer).Id)"
+    }
     Stop-RetroBar
     Disable-TaskbarAutoHide
     Restore-WindowsTaskbar
@@ -707,6 +817,7 @@ if ($Relaunch) {
     if ($script:BuildOk) {
         Start-RetroBar -cfg $Configuration -fw $Framework
     }
+
     if ($Log -and $script:BuildOk) {
         Start-LogTail -WaitForNew
     }

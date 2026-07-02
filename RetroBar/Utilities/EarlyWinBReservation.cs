@@ -24,7 +24,6 @@ namespace RetroBar.Utilities
 
         public EarlyWinBReservation()
         {
-            ShellLogger.Info("EarlyWinBReservation: Attempting to reserve Win+B before any tray window exists");
             ShellLogger.Info($"EarlyWinBReservation: GetShellWindow()=0x{GetShellWindow():X} at start");
             ShellTrayWindowDiagnostics.LogShellTrayWindows("EarlyWinBReservation: at start");
 
@@ -32,12 +31,12 @@ namespace RetroBar.Utilities
             TraySoftUnregister.TryUnregisterFromProcess("sihost", VK.KEY_B);
             TraySoftUnregister.TryUnregisterFromProcess("explorer", VK.KEY_B);
 
-            IsHeld = TryRegister();
-            if (IsHeld)
-            {
-                ShellLogger.Info("EarlyWinBReservation: Reserved Win+B without restarting explorer.exe");
-                return;
-            }
+            // IsHeld = TryRegister();
+            // if (IsHeld)
+            // {
+            //     ShellLogger.Info("EarlyWinBReservation: Reserved Win+B without restarting explorer.exe");
+            //     return;
+            // }
 
             ExplorerHotkeyStealer.StealWinBFromExplorer(() => IsHeld = TryRegister());
 

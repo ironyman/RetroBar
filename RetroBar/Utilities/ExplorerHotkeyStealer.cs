@@ -3,6 +3,7 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Threading;
+using System.Runtime.InteropServices;
 using static ManagedShell.Interop.NativeMethods;
 
 namespace RetroBar.Utilities
@@ -33,6 +34,47 @@ namespace RetroBar.Utilities
         private static readonly TimeSpan ShellWaitTimeout = TimeSpan.FromSeconds(10);
         private const int ShellWaitPollIntervalMs = 50;
 
+        [DllImport("ntdll.dll", SetLastError = true)]
+        public static extern int NtTerminateProcess(IntPtr processHandle, int exitStatus);
+
+        public static bool StopExplorer()
+        {
+            var existing = Process.GetProcessesByName("explorer");
+            if (existing.Length == 0)
+            {
+                ShellLogger.Warning("ExplorerHotkeyStealer: explorer.exe not running, nothing to steal Win+B from");
+                return false;
+            }
+
+            ShellLogger.Info($"ExplorerHotkeyStealer: GetShellWindow()=0x{GetShellWindow():X} before terminate; PIDs to terminate: {string.Join(",", Array.ConvertAll(existing, p => p.Id))}");
+
+            foreach (var p in existing)
+            {
+                try
+                {
+                    if (!p.HasExited)
+                    {
+                        IntPtr hProcess = OpenProcess(ProcessAccessFlags.Terminate, false, p.Id);
+                        if (hProcess != IntPtr.Zero)
+                        {
+                            NtTerminateProcess(hProcess, 1);
+                            CloseHandle(hProcess);
+                            ShellLogger.Info($"ExplorerHotkeyStealer: NtTerminateProcess(PID={p.Id}) called with exit code 1");
+                        }
+                    }
+                }
+                catch (Exception ex) { ShellLogger.Warning($"ExplorerHotkeyStealer: Failed terminating explorer.exe (PID={p.Id}) - {ex.Message}"); }
+            }
+
+            foreach (var p in existing)
+            {
+                try { if (!p.HasExited) p.WaitForExit(1000); }
+                catch (Exception ex) { ShellLogger.Warning($"ExplorerHotkeyStealer: Failed waiting for explorer.exe (PID={p.Id}) - {ex.Message}"); }
+            }
+
+            return true;
+        }
+
         /// <summary>
         /// Kills explorer.exe, invokes <paramref name="registerHotkey"/> while it's dead, then
         /// relaunches it. Launching explorer.exe with no arguments while no shell is running starts
@@ -42,23 +84,9 @@ namespace RetroBar.Utilities
         {
             try
             {
-                var existing = Process.GetProcessesByName("explorer");
-                if (existing.Length == 0)
-                {
-                    ShellLogger.Warning("ExplorerHotkeyStealer: explorer.exe not running, nothing to steal Win+B from");
-                    return false;
-                }
+                StopExplorer();
 
-                ShellLogger.Info($"ExplorerHotkeyStealer: GetShellWindow()=0x{GetShellWindow():X} before kill; PIDs to kill: {string.Join(",", Array.ConvertAll(existing, p => p.Id))}");
-
-                foreach (var p in existing)
-                {
-                    try { p.Kill(); p.WaitForExit(5000); }
-                    catch (Exception ex) { ShellLogger.Warning($"ExplorerHotkeyStealer: Failed to kill explorer.exe (PID={p.Id}) - {ex.Message}"); }
-                    finally { p.Dispose(); }
-                }
-
-                ShellLogger.Info("ExplorerHotkeyStealer: Killed explorer.exe, registering Win+B while it's dead");
+                ShellLogger.Info("ExplorerHotkeyStealer: Explorer.exe exited, registering Win+B while it's dead");
                 ShellTrayWindowDiagnostics.LogShellTrayWindows("ExplorerHotkeyStealer: after kill, before registerHotkey");
                 registerHotkey();
 
