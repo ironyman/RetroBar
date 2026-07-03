@@ -20,11 +20,14 @@ namespace RetroBar.Controls
         private readonly ItemsControl _tasksList;
         private readonly Dispatcher _dispatcher;
 
+        private const double DesktopSplitCheckMs = 250;
+
         private readonly List<TaskGroup> _taskGroups = new List<TaskGroup>();
         private DispatcherTimer _groupHoverTimer;
         private int _groupHoverTargetIndex = -1;
         private bool _groupHoverConfirmed;
         private TaskGroup _provisionalGroup;
+        private DispatcherTimer _desktopSplitTimer;
 
         public TaskGroupManager(ItemsControl tasksList, Dispatcher dispatcher)
         {
@@ -211,14 +214,54 @@ namespace RetroBar.Controls
         }
 
         // Dissolves group membership for any window no longer present in the source collection.
-        // Used when the source collection reports a full Reset.
-        public void ReconcileWithSource(IEnumerable<ApplicationWindow> remainingWindows)
+        // Used when the source collection reports a full Reset. remainingWindows is keyed by
+        // Handle (ApplicationWindow only overrides Equals, not GetHashCode, so hashing by the
+        // object itself would silently misbehave across instances for the same window).
+        // keepHidden lets a caller preserve membership for windows that are legitimately absent
+        // from the source collection right now (e.g. hidden by WorkspaceManager for being on
+        // another workspace) rather than genuinely gone.
+        public void ReconcileWithSource(IEnumerable<ApplicationWindow> remainingWindows, Func<IntPtr, bool> keepHidden = null)
         {
-            var remaining = new HashSet<ApplicationWindow>(remainingWindows);
+            var remaining = new HashSet<IntPtr>(remainingWindows.Select(w => w.Handle));
             foreach (var g in _taskGroups.ToList())
             {
-                g.Windows.RemoveAll(w => !remaining.Contains(w));
+                g.Windows.RemoveAll(w => !remaining.Contains(w.Handle) && keepHidden?.Invoke(w.Handle) != true);
                 if (g.Windows.Count <= 1) _taskGroups.Remove(g);
+            }
+        }
+
+        // A grouped window just cloaked while still existing (not genuinely closed) - it may have
+        // been moved to a different virtual desktop individually, or this may be one event in a
+        // bulk desktop switch that's taking its whole group along together. Debounce briefly so
+        // any sibling cloak/uncloak events from the same switch have time to land before deciding.
+        public void ScheduleDesktopSplitCheck(ObservableCollection<ApplicationWindow> source)
+        {
+            _desktopSplitTimer?.Stop();
+            _desktopSplitTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(DesktopSplitCheckMs) };
+            _desktopSplitTimer.Tick += (_, _) =>
+            {
+                _desktopSplitTimer.Stop();
+                _desktopSplitTimer = null;
+                CheckForDesktopSplits(source);
+            };
+            _desktopSplitTimer.Start();
+        }
+
+        // A group has split across virtual desktops if some (but not all) of its members are
+        // currently visible. Ungroup just the members that left - the least surprising outcome,
+        // since the user's action (moving one window) only affected that window, not its
+        // groupmates. A group where every member is invisible together (its whole desktop was
+        // switched away from) is left untouched; it resurfaces intact once that desktop returns.
+        private void CheckForDesktopSplits(ObservableCollection<ApplicationWindow> source)
+        {
+            foreach (var group in _taskGroups.ToList())
+            {
+                var invisible = group.Windows.Where(w => !w.ShowInTaskbar).ToList();
+                if (invisible.Count == 0 || invisible.Count == group.Windows.Count)
+                    continue;
+
+                foreach (var w in invisible)
+                    UngroupWindow(w, source);
             }
         }
 

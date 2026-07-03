@@ -304,14 +304,49 @@ namespace RetroBar.Controls
             bool changed = false;
             if (e.OldItems != null)
             {
-                changed = _groupManager.RemoveWindows(e.OldItems.OfType<ApplicationWindow>());
+                // e.OldItems includes windows that merely dropped out of the *filtered* view -
+                // cloaked by a native virtual-desktop switch, hidden by our own WorkspaceManager,
+                // or excluded by the multi-monitor filter - as well as windows that are genuinely
+                // gone. Only genuinely-gone windows should lose their group membership; the rest
+                // still exist and will resurface (with their group intact) once unfiltered.
+                var rawSource = taskbarItems?.SourceCollection as ObservableCollection<ApplicationWindow>;
+                var stillExists = new HashSet<IntPtr>();
+                if (rawSource != null)
+                {
+                    foreach (var w in rawSource)
+                        stillExists.Add(w.Handle);
+                }
+
+                var oldWindows = e.OldItems.OfType<ApplicationWindow>().ToList();
+
+                var genuinelyGone = oldWindows
+                    .Where(w => !stillExists.Contains(w.Handle) && !WorkspaceManager.Instance.IsHiddenByUs(w.Handle))
+                    .ToList();
+
+                if (genuinelyGone.Count > 0)
+                {
+                    changed = _groupManager.RemoveWindows(genuinelyGone);
+                }
+
+                // A grouped window that's still around but cloaked (not merely monitor-filtered)
+                // may have been moved to a different virtual desktop individually rather than as
+                // part of a bulk switch taking its whole group along. Check once things settle.
+                bool anyCloakedGroupMember = oldWindows.Any(w =>
+                    stillExists.Contains(w.Handle) && !w.ShowInTaskbar && _groupManager.GetGroupForWindow(w) != null);
+
+                if (anyCloakedGroupMember && rawSource != null)
+                {
+                    _groupManager.ScheduleDesktopSplitCheck(rawSource);
+                }
             }
             else if (action == System.Collections.Specialized.NotifyCollectionChangedAction.Reset)
             {
                 // Full reset — dissolve all groups whose members are no longer in the source.
+                // Windows hidden by WorkspaceManager (another workspace) are genuinely absent
+                // from the source collection right now but aren't gone - keep their membership.
                 if (taskbarItems?.SourceCollection is System.Collections.IEnumerable src)
                 {
-                    _groupManager.ReconcileWithSource(src.OfType<ApplicationWindow>());
+                    _groupManager.ReconcileWithSource(src.OfType<ApplicationWindow>(), WorkspaceManager.Instance.IsHiddenByUs);
                 }
                 changed = true;
             }

@@ -29,4 +29,5 @@ Groups are a RetroBar-specific UI feature in TaskList (RetroBar/Controls/TaskLis
 - Context menu actions: UngroupWindow, ChangeGroupColor, RemoveGroup, CollapseGroup
 - Visual stripe colors applied via btn.SetGroupColor(group.GroupColor)
 - Groups are not persisted — they're lost on restart
+- Group membership survives a window being temporarily filtered out of the visible TaskList (native virtual-desktop cloak, WorkspaceManager hiding it for another workspace, or the multi-monitor filter): TaskList.HandleGroupedWindowsRemovalOrReset only calls TaskGroupManager.RemoveWindows/ReconcileWithSource for windows that are genuinely gone — absent from the raw TasksService.Windows collection *and* not WorkspaceManager.Instance.IsHiddenByUs. A window that's merely hidden keeps its group/color and reappears intact once it's uncloaked or shown again, matched by Handle (ApplicationWindow implements IEquatable<ApplicationWindow> by Handle, not by reference)
 The "classic" grouping by application is separate — it's done via PropertyGroupDescription("Category") in Tasks.cs:34, which groups taskbar buttons by their app category (set by TaskCategoryProvider).
