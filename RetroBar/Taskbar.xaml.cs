@@ -667,6 +667,12 @@ namespace RetroBar
             SetBtopMenuItemVisibility(menu);
             _openTrayContextMenu = menu;
 
+            // Force ourselves to the foreground so clicking any other window (including an already-
+            // foreground elevated window) becomes a real foreground change that the FG hook can catch.
+            // Without this the menu can stay open forever when clicking into an elevated app, because
+            // the mouse hook is UIPI-blocked and no foreground *change* occurs. See ContextMenu_Opened.
+            if (Handle != IntPtr.Zero) NativeMethods.SetForegroundWindow(Handle);
+
             _trayContextMenuHook = new LowLevelMouseHook();
             _trayContextMenuHook.LowLevelMouseEvent += OnTrayContextMenuMouseEvent;
             _trayContextMenuHook.Initialize();
@@ -734,6 +740,13 @@ namespace RetroBar
                 SetBtopMenuItemVisibility(menu);
                 SetGatherAllWindowsEnabled(menu);
                 _openTrayContextMenu = menu;
+
+                // Force ourselves to the foreground so clicking any other window (including an already-
+                // foreground elevated window) becomes a real foreground change that the FG hook can
+                // catch. The taskbar is WS_EX_NOACTIVATE, so opening the menu otherwise leaves the
+                // previously-foreground (possibly elevated) window as foreground; clicking back into it
+                // would produce no foreground change and the UIPI-blocked mouse hook never sees it.
+                if (Handle != IntPtr.Zero) NativeMethods.SetForegroundWindow(Handle);
 
                 _trayContextMenuHook = new LowLevelMouseHook();
                 _trayContextMenuHook.LowLevelMouseEvent += OnTrayContextMenuMouseEvent;

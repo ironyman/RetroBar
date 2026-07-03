@@ -40,6 +40,8 @@ namespace RetroBar.Controls
         private bool _dragMouseDown;
         private Point _dragStartPoint;
         private LowLevelMouseHook _contextMenuHook;
+        private IntPtr _contextMenuForegroundHook = IntPtr.Zero;
+        private NativeMethods.WinEventProc _contextMenuForegroundHookProc; // field keeps delegate alive
 
         public TaskButton()
         {
@@ -526,6 +528,14 @@ namespace RetroBar.Controls
                 _contextMenuHook = new LowLevelMouseHook();
                 _contextMenuHook.LowLevelMouseEvent += OnContextMenuMouseEvent;
                 _contextMenuHook.Initialize();
+
+                // The taskbar is WS_EX_NOACTIVATE, so opening the menu does not make us the foreground
+                // window. If an elevated window was already foreground, clicking back into it is not a
+                // foreground *change* and neither the mouse hook (UIPI-blocked over elevated windows)
+                // nor the foreground hook below would fire. Force ourselves to the foreground so any
+                // subsequent click into another window is a real foreground change that closes the menu.
+                if (Host?.Host?.Handle is { } fgSelf && fgSelf != IntPtr.Zero)
+                    NativeMethods.SetForegroundWindow(fgSelf);
 
                 if (Host?.Host?.hotkeyManager is { } hm)
                     hm.EscapeKeyDown += CloseContextMenuOnEscape;
