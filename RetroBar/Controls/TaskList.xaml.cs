@@ -727,6 +727,13 @@ namespace RetroBar.Controls
         // asymmetry is the intended hysteresis between leaving and rejoining.
         private bool _dragSoloInGroup;
 
+        // A hover-merge was confirmed on this drag, so the grouped collection needs a Refresh to
+        // re-run its filter (e.g. when merging into a collapsed group). Deferred until the very end
+        // of CommitDrag: refreshing mid-drag raises a Reset that regenerates every container,
+        // detaching the dragged button's container from the snap animation and letting the freshly
+        // generated one reappear at its old slot — the button visibly snaps back to its origin.
+        private bool _dragCommittedMerge;
+
         // The non-moving buttons, partitioned into "blocks": a run of members belonging to the
         // same foreign task group is one indivisible block, everything else is its own singleton
         // block. Swaps are evaluated a whole block at a time so a multi-button group is treated
@@ -1085,11 +1092,15 @@ namespace RetroBar.Controls
             // animation can't restart UpdateButtonDrag and cancel the snap (leaving it stuck).
             _isDragging = false;
 
-            // Commit or cancel provisional group before starting snap animation.
+            // Commit or cancel provisional group before starting snap animation. The group
+            // membership (data only) is committed now, but the collection Refresh is deferred to the
+            // end of CommitDrag: refreshing here regenerates every container mid-snap, detaching the
+            // dragged button so it appears to snap back to its origin.
+            _dragCommittedMerge = false;
             if (_groupManager.HoverConfirmed)
             {
                 _groupManager.CommitProvisionalGroup();
-                taskbarItems?.Refresh();
+                _dragCommittedMerge = true;
             }
             else
                 CancelGroupHover();
@@ -1321,8 +1332,20 @@ namespace RetroBar.Controls
             _dragSoloGroupLastItemIdx = -1;
             _dragSoloInGroup = false;
 
+            bool committedMerge = _dragCommittedMerge;
+            _dragCommittedMerge = false;
+
             // Reapply group visuals after layout settles (collection moves may recycle containers).
-            Dispatcher.BeginInvoke(DispatcherPriority.Loaded, (Action)_groupManager.ApplyGroupVisuals);
+            // If a hover-merge committed, run the deferred collection Refresh here too (re-runs the
+            // filter, e.g. hiding members when merging into a collapsed group). Doing it now — after
+            // the source reorder and transform cleanup — keeps the snap animation's containers valid,
+            // whereas refreshing at drag-end regenerated them and caused the button to snap back.
+            Dispatcher.BeginInvoke(DispatcherPriority.Loaded, (Action)(() =>
+            {
+                if (committedMerge)
+                    taskbarItems?.Refresh();
+                _groupManager.ApplyGroupVisuals();
+            }));
         }
 
         private static TranslateTransform GetTranslate(ContentPresenter cp)
