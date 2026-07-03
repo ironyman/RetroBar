@@ -57,6 +57,7 @@ namespace RetroBar.Controls
         public TaskList()
         {
             InitializeComponent();
+            _groupManager = new TaskGroupManager(TasksList, Dispatcher);
         }
 
         private void SetStyles()
@@ -267,7 +268,7 @@ namespace RetroBar.Controls
                 int insertedIdx = source.IndexOf(newWindow);
                 if (insertedIdx < 0) continue;
 
-                foreach (var group in _taskGroups)
+                foreach (var group in _groupManager.Groups)
                 {
                     if (group.Windows.Count < 2) continue;
 
@@ -303,33 +304,20 @@ namespace RetroBar.Controls
             bool changed = false;
             if (e.OldItems != null)
             {
-                foreach (ApplicationWindow window in e.OldItems)
-                {
-                    var group = GetGroupForWindow(window);
-                    if (group == null) continue;
-                    group.Windows.Remove(window);
-                    if (group.Windows.Count <= 1)
-                        _taskGroups.Remove(group);
-                    changed = true;
-                }
+                changed = _groupManager.RemoveWindows(e.OldItems.OfType<ApplicationWindow>());
             }
             else if (action == System.Collections.Specialized.NotifyCollectionChangedAction.Reset)
             {
                 // Full reset — dissolve all groups whose members are no longer in the source.
                 if (taskbarItems?.SourceCollection is System.Collections.IEnumerable src)
                 {
-                    var remaining = new HashSet<ApplicationWindow>(src.OfType<ApplicationWindow>());
-                    foreach (var g in _taskGroups.ToList())
-                    {
-                        g.Windows.RemoveAll(w => !remaining.Contains(w));
-                        if (g.Windows.Count <= 1) _taskGroups.Remove(g);
-                    }
+                    _groupManager.ReconcileWithSource(src.OfType<ApplicationWindow>());
                 }
                 changed = true;
             }
 
             if (changed)
-                Dispatcher.BeginInvoke(DispatcherPriority.Loaded, (Action)ApplyGroupVisuals);
+                _groupManager.UpdateGroupVisuals();
         }
 
         private void TaskList_OnSizeChanged(object sender, SizeChangedEventArgs e)
@@ -430,268 +418,49 @@ namespace RetroBar.Controls
 
         #region Task groups
 
-        private readonly List<TaskGroup> _taskGroups = new List<TaskGroup>();
-
-        // During-drag provisional group (shown as stripe preview; committed on mouse release).
-        private DispatcherTimer _groupHoverTimer;
-        private int _groupHoverTargetIndex = -1;
-        private bool _groupHoverConfirmed;
-        private TaskGroup _provisionalGroup;
-        private const double GroupHoverMs = 300;
-
-        private TaskGroup GetGroupForWindow(ApplicationWindow window)
-            => _taskGroups.FirstOrDefault(g => g.Windows.Contains(window));
-
-        private static TaskButton GetTaskButton(ContentPresenter cp)
-        {
-            if (cp == null || VisualTreeHelper.GetChildrenCount(cp) == 0) return null;
-            return VisualTreeHelper.GetChild(cp, 0) as TaskButton;
-        }
-
-        // Schedules a visual refresh on the next layout pass so containers are ready.
-        private void UpdateGroupVisuals()
-            => Dispatcher.BeginInvoke(DispatcherPriority.Loaded, (Action)ApplyGroupVisuals);
-
-        private void ApplyGroupVisuals()
-        {
-            for (int i = 0; i < TasksList.Items.Count; i++)
-            {
-                if (TasksList.ItemContainerGenerator.ContainerFromIndex(i) is not ContentPresenter cp) continue;
-                var btn = GetTaskButton(cp);
-                if (btn == null) continue;
-                var window = cp.DataContext as ApplicationWindow;
-                if (window == null) continue;
-
-                var group = GetGroupForWindow(window);
-                if (group != null)
-                {
-                    btn.SetGroupColor(group.GroupColor);
-                    continue;
-                }
-
-                if (_provisionalGroup?.Windows.Contains(window) == true)
-                {
-                    btn.SetGroupColor(_provisionalGroup.GroupColor);
-                    continue;
-                }
-
-                btn.SetGroupColor(null);
-            }
-        }
+        // All task-group state and mutation logic is owned by _groupManager; this region only
+        // wires TaskList's own drag mechanics into it.
+        private readonly TaskGroupManager _groupManager;
 
         // Called by TaskButton.Loaded so new buttons pick up their group color.
-        public void RefreshGroupVisual(TaskButton btn)
-        {
-            if (btn?.DataContext is not ApplicationWindow window) return;
-            var group = GetGroupForWindow(window);
-            if (group != null)
-                btn.SetGroupColor(group.GroupColor);
-            else if (_provisionalGroup?.Windows.Contains(window) == true)
-                btn.SetGroupColor(_provisionalGroup.GroupColor);
-            else
-                btn.SetGroupColor(null);
-        }
+        public void RefreshGroupVisual(TaskButton btn) => _groupManager.RefreshGroupVisual(btn);
 
         // Called from TaskButton right-click → Remove from group.
         public void UngroupWindow(ApplicationWindow window)
-        {
-            if (window == null) return;
-            var group = GetGroupForWindow(window);
-            if (group == null) return;
-
-            group.Windows.Remove(window);
-
-            if (taskbarItems?.SourceCollection is ObservableCollection<ApplicationWindow> source)
-            {
-                int windowPos = source.IndexOf(window);
-                if (windowPos >= 0 && group.Windows.Count > 0)
-                {
-                    // Find the span of remaining group members in collection order.
-                    var groupPositions = group.Windows
-                        .Select(w => source.IndexOf(w))
-                        .Where(idx => idx >= 0)
-                        .OrderBy(idx => idx)
-                        .ToList();
-
-                    if (groupPositions.Count > 0)
-                    {
-                        int firstGroupIdx = groupPositions[0];
-                        int lastGroupIdx = groupPositions[groupPositions.Count - 1];
-
-                        // Place before or after the group based on which end is closer.
-                        bool placeBeforeGroup = Math.Abs(windowPos - firstGroupIdx) <= Math.Abs(windowPos - lastGroupIdx);
-
-                        int targetPos;
-                        if (placeBeforeGroup)
-                        {
-                            // Insert before the first group member.
-                            // After removing windowPos, firstGroupIdx shifts down if windowPos < it.
-                            targetPos = windowPos < firstGroupIdx ? firstGroupIdx - 1 : firstGroupIdx;
-                        }
-                        else
-                        {
-                            // Insert after the last group member.
-                            // After removing windowPos, lastGroupIdx shifts down if windowPos < it.
-                            targetPos = windowPos < lastGroupIdx ? lastGroupIdx : lastGroupIdx + 1;
-                        }
-
-                        targetPos = Math.Max(0, Math.Min(targetPos, source.Count - 1));
-                        if (targetPos != windowPos)
-                            source.Move(windowPos, targetPos);
-                    }
-                }
-            }
-
-            if (group.Windows.Count <= 1)
-                _taskGroups.Remove(group);
-
-            UpdateGroupVisuals();
-        }
+            => _groupManager.UngroupWindow(window, taskbarItems?.SourceCollection as ObservableCollection<ApplicationWindow>);
 
         // Called from TaskButton right-click → New color for group.
-        public void ChangeGroupColor(ApplicationWindow window)
-        {
-            var group = GetGroupForWindow(window);
-            if (group == null) return;
-            group.GroupColor = TaskGroup.RandomColor();
-            UpdateGroupVisuals();
-        }
+        public void ChangeGroupColor(ApplicationWindow window) => _groupManager.ChangeGroupColor(window);
 
         // Called from TaskButton right-click → Remove group.
-        // Dissolves group membership for all windows without repositioning them.
-        public void RemoveGroup(ApplicationWindow window)
-        {
-            if (window == null) return;
-            var group = GetGroupForWindow(window);
-            if (group == null) return;
-            _taskGroups.Remove(group);
-            UpdateGroupVisuals();
-        }
+        public void RemoveGroup(ApplicationWindow window) => _groupManager.RemoveGroup(window);
 
         // Returns the windows belonging to the same group as the given window.
-        public List<ApplicationWindow> GetGroupWindows(ApplicationWindow window)
-        {
-            var group = GetGroupForWindow(window);
-            if (group == null) return new List<ApplicationWindow> { window };
-            return new List<ApplicationWindow>(group.Windows);
-        }
+        public List<ApplicationWindow> GetGroupWindows(ApplicationWindow window) => _groupManager.GetGroupWindows(window);
 
         // Collapses the group containing the given window.
-        public void CollapseGroup(ApplicationWindow window)
-        {
-            if (window == null) return;
-            var group = GetGroupForWindow(window);
-            if (group == null) return;
-            group.IsCollapsed = true;
-            UpdateGroupVisuals();
-        }
+        public void CollapseGroup(ApplicationWindow window) => _groupManager.CollapseGroup(window);
 
         // Collapses all task groups.
-        public void CollapseAllGroups()
-        {
-            foreach (var group in _taskGroups)
-                group.IsCollapsed = true;
-            UpdateGroupVisuals();
-        }
+        public void CollapseAllGroups() => _groupManager.CollapseAllGroups();
 
         // Uncollapses all task groups.
-        public void UncollapseAllGroups()
-        {
-            foreach (var group in _taskGroups)
-                group.IsCollapsed = false;
-            UpdateGroupVisuals();
-        }
+        public void UncollapseAllGroups() => _groupManager.UncollapseAllGroups();
 
-        private void StartGroupHover(int targetIndex)
-        {
-            _groupHoverTargetIndex = targetIndex;
-            _groupHoverTimer?.Stop();
-            _groupHoverTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(GroupHoverMs) };
-            _groupHoverTimer.Tick += (_, _) => OnGroupHoverConfirmed();
-            _groupHoverTimer.Start();
-        }
+        private void StartGroupHover(int targetIndex) => _groupManager.StartHover(targetIndex, OnGroupHoverConfirmed);
 
-        private void CancelGroupHover()
-        {
-            _groupHoverTimer?.Stop();
-            _groupHoverTimer = null;
-
-            if (_groupHoverConfirmed)
-            {
-                _groupHoverConfirmed = false;
-                _provisionalGroup = null;
-                ApplyGroupVisuals();
-            }
-
-            _groupHoverTargetIndex = -1;
-        }
+        private void CancelGroupHover() => _groupManager.CancelHover();
 
         private void OnGroupHoverConfirmed()
         {
-            _groupHoverTimer?.Stop();
-            _groupHoverTimer = null;
-
-            if (!_isDragging || _groupHoverTargetIndex < 0 || _dragContainer == null) return;
+            if (!_isDragging || _groupManager.HoverTargetIndex < 0 || _dragContainer == null) return;
 
             var draggedWindow = _dragContainer.DataContext as ApplicationWindow;
-            if (_groupHoverTargetIndex >= _dragContainers.Count) return;
-            var targetWindow = _dragContainers[_groupHoverTargetIndex].DataContext as ApplicationWindow;
+            if (_groupManager.HoverTargetIndex >= _dragContainers.Count) return;
+            var targetWindow = _dragContainers[_groupManager.HoverTargetIndex].DataContext as ApplicationWindow;
             if (draggedWindow == null || targetWindow == null) return;
 
-            var draggedGroup = GetGroupForWindow(draggedWindow);
-            var targetGroup = GetGroupForWindow(targetWindow);
-
-            // Pick the color from whichever side already has a group; otherwise random.
-            Color color = (targetGroup ?? draggedGroup)?.GroupColor ?? TaskGroup.RandomColor();
-
-            _provisionalGroup = new TaskGroup(color);
-
-            // Merge both sides into the provisional display set.
-            if (draggedGroup != null)
-                foreach (var w in draggedGroup.Windows) _provisionalGroup.Windows.Add(w);
-            else
-                _provisionalGroup.Windows.Add(draggedWindow);
-
-            if (targetGroup != null)
-            {
-                foreach (var w in targetGroup.Windows)
-                    if (!_provisionalGroup.Windows.Contains(w)) _provisionalGroup.Windows.Add(w);
-            }
-            else
-            {
-                if (!_provisionalGroup.Windows.Contains(targetWindow))
-                    _provisionalGroup.Windows.Add(targetWindow);
-            }
-
-            _groupHoverConfirmed = true;
-            ApplyGroupVisuals();
-        }
-
-        private void CommitGroupFromProvisional()
-        {
-            if (!_groupHoverConfirmed || _provisionalGroup == null) return;
-
-            // Collect old groups that contain any provisional member.
-            var oldGroups = new HashSet<TaskGroup>();
-            foreach (var w in _provisionalGroup.Windows)
-            {
-                var g = GetGroupForWindow(w);
-                if (g != null) oldGroups.Add(g);
-            }
-
-            // Strip those windows from their old groups (may dissolve them).
-            foreach (var g in oldGroups)
-            {
-                g.Windows.RemoveAll(w => _provisionalGroup.Windows.Contains(w));
-                if (g.Windows.Count <= 1)
-                    _taskGroups.Remove(g);
-            }
-
-            // The provisional object becomes the committed group.
-            _taskGroups.Add(_provisionalGroup);
-            _provisionalGroup = null;
-            _groupHoverConfirmed = false;
-            _groupHoverTargetIndex = -1;
+            _groupManager.ConfirmHover(draggedWindow, targetWindow);
         }
 
         // Computes the dragged button's bounding rect in WrapPanel coordinates,
@@ -826,7 +595,7 @@ namespace RetroBar.Controls
             bool horizontal = Host?.Orientation != Orientation.Vertical;
 
             var draggedWindow = _dragContainer.DataContext as ApplicationWindow;
-            var draggedGroup = draggedWindow != null ? GetGroupForWindow(draggedWindow) : null;
+            var draggedGroup = draggedWindow != null ? _groupManager.GetGroupForWindow(draggedWindow) : null;
             if (draggedGroup != null && draggedGroup.Windows.Count > 1)
             {
                 for (int i = 0; i < _dragContainers.Count; i++)
@@ -867,7 +636,7 @@ namespace RetroBar.Controls
                 if (movingIndices.Contains(i)) continue;
 
                 var window = _dragContainers[i].DataContext as ApplicationWindow;
-                var group = window != null ? GetGroupForWindow(window) : null;
+                var group = window != null ? _groupManager.GetGroupForWindow(window) : null;
 
                 if (group != null && ReferenceEquals(group, currentGroup))
                 {
@@ -1031,7 +800,7 @@ namespace RetroBar.Controls
                     }
                 }
 
-                if (overlapIdx != _groupHoverTargetIndex)
+                if (overlapIdx != _groupManager.HoverTargetIndex)
                 {
                     // Cancel previous state (even if confirmed — dragging away always cancels).
                     CancelGroupHover();
@@ -1051,8 +820,8 @@ namespace RetroBar.Controls
             _isDragging = false;
 
             // Commit or cancel provisional group before starting snap animation.
-            if (_groupHoverConfirmed)
-                CommitGroupFromProvisional();
+            if (_groupManager.HoverConfirmed)
+                _groupManager.CommitProvisionalGroup();
             else
                 CancelGroupHover();
 
@@ -1265,7 +1034,7 @@ namespace RetroBar.Controls
             _dragBlockGap = 0;
 
             // Reapply group visuals after layout settles (collection moves may recycle containers).
-            Dispatcher.BeginInvoke(DispatcherPriority.Loaded, (Action)ApplyGroupVisuals);
+            Dispatcher.BeginInvoke(DispatcherPriority.Loaded, (Action)_groupManager.ApplyGroupVisuals);
         }
 
         private static TranslateTransform GetTranslate(ContentPresenter cp)
