@@ -18,6 +18,13 @@ namespace RetroBar.Utilities
         private readonly HashSet<IntPtr> _hiddenByUs = new();
         private ObservableCollection<ApplicationWindow> _windows;
 
+        // Remembers each workspace's button order (by handle) so that when a workspace's windows
+        // are hidden and later re-shown, they can be reinserted in their original relative order
+        // instead of whatever order the OS happens to deliver the async show notifications in -
+        // which otherwise varies run to run (e.g. with which window ends up foreground) and made
+        // the taskbar reorder itself on every switch.
+        private readonly Dictionary<int, List<IntPtr>> _workspaceOrder = new();
+
         public const int WorkspaceCount = 9;
         public int CurrentWorkspace => _currentWorkspace;
 
@@ -29,11 +36,14 @@ namespace RetroBar.Utilities
         {
             _windows = windows;
 
+            var initialOrder = new List<IntPtr>();
             foreach (ApplicationWindow w in _windows)
             {
                 if (!_windowWorkspaces.ContainsKey(w.Handle))
                     _windowWorkspaces[w.Handle] = _currentWorkspace;
+                initialOrder.Add(w.Handle);
             }
+            _workspaceOrder[_currentWorkspace] = initialOrder;
 
             _windows.CollectionChanged += Windows_CollectionChanged;
         }
@@ -46,6 +56,13 @@ namespace RetroBar.Utilities
                 {
                     if (!_windowWorkspaces.ContainsKey(w.Handle))
                         _windowWorkspaces[w.Handle] = _currentWorkspace;
+
+                    // A window reappearing after being hidden for a workspace switch already has
+                    // a remembered slot in this workspace's order - only genuinely new windows
+                    // need to be appended.
+                    var order = GetOrCreateWorkspaceOrder(_currentWorkspace);
+                    if (!order.Contains(w.Handle))
+                        order.Add(w.Handle);
                 }
             }
             else if (e.Action == NotifyCollectionChangedAction.Remove && e.OldItems != null)
@@ -55,13 +72,58 @@ namespace RetroBar.Utilities
                     // Hiding a window makes the OS fire HSHELL_WINDOWDESTROYED, so the shell
                     // removes it from the collection exactly as if it had closed. If we're the
                     // ones who hid it, the window still exists — keep its workspace assignment
-                    // so we can restore it when switching back. Only forget genuine closes.
+                    // (and its remembered order slot) so we can restore it when switching back.
+                    // Only forget genuine closes.
                     if (_hiddenByUs.Contains(w.Handle))
                         continue;
 
+                    int workspace = GetWindowWorkspace(w.Handle);
                     _windowWorkspaces.Remove(w.Handle);
+
+                    if (_workspaceOrder.TryGetValue(workspace, out var order))
+                        order.Remove(w.Handle);
                 }
             }
+            else if (e.Action == NotifyCollectionChangedAction.Move)
+            {
+                // A manual drag-reorder within the current workspace - remember the new order so
+                // it's restored the same way after switching away and back.
+                _workspaceOrder[_currentWorkspace] = _windows.Select(w => w.Handle).ToList();
+            }
+        }
+
+        private List<IntPtr> GetOrCreateWorkspaceOrder(int workspace)
+        {
+            if (!_workspaceOrder.TryGetValue(workspace, out var order))
+            {
+                order = new List<IntPtr>();
+                _workspaceOrder[workspace] = order;
+            }
+            return order;
+        }
+
+        // Used as a WindowInsertionIndexProvider so that a window being re-shown after a
+        // workspace switch lands back in the position it previously held, regardless of the
+        // (nondeterministic) order in which the OS delivers the show notifications for the
+        // batch of windows being restored. Returns -1 (let the caller decide, e.g. append) for
+        // windows with no remembered slot on the current workspace, such as genuinely new windows.
+        public int GetInsertionIndex(ApplicationWindow win, IList<ApplicationWindow> windows)
+        {
+            if (!_workspaceOrder.TryGetValue(_currentWorkspace, out var order))
+                return -1;
+
+            int pos = order.IndexOf(win.Handle);
+            if (pos < 0)
+                return -1;
+
+            int idx = 0;
+            foreach (var w in windows)
+            {
+                int wPos = order.IndexOf(w.Handle);
+                if (wPos < 0 || wPos < pos)
+                    idx++;
+            }
+            return idx;
         }
 
         private static void SetWindowVisible(IntPtr hwnd, bool visible)

@@ -43,6 +43,12 @@ namespace RetroBar
             _shellManager = SetupManagedShell();
             _shellManager.TasksService.WindowInsertionIndexProvider = (win, windows) =>
             {
+                // A window reappearing after a workspace switch has a remembered slot - restoring
+                // it there takes priority over GroupAfterParent, which is only meant for windows
+                // that are genuinely new.
+                int workspaceIdx = WorkspaceManager.Instance.GetInsertionIndex(win, windows);
+                if (workspaceIdx >= 0) return workspaceIdx;
+
                 if (!Settings.Instance.GroupAfterParent) return -1;
                 return ParentWindowHelper.FindInsertionIndex(win, windows);
             };
