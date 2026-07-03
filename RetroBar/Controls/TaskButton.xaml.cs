@@ -511,9 +511,9 @@ namespace RetroBar.Controls
 
         private void CloseContextMenuOnEscape()
         {
-            var menu = AppButton?.ContextMenu;
             Dispatcher.BeginInvoke(() =>
             {
+                var menu = AppButton?.ContextMenu;
                 if (menu?.IsOpen == true)
                     menu.IsOpen = false;
             });
