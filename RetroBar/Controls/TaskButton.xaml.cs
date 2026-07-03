@@ -204,7 +204,6 @@ namespace RetroBar.Controls
             SizeMenuItem.IsEnabled = wss == NativeMethods.WindowShowStyle.ShowNormal && (ws & (int)NativeMethods.WindowStyles.WS_MAXIMIZEBOX) != 0;
 
             SendToWorkspaceMenuItem.Items.Clear();
-            var groupWindows = Host?.GetGroupWindows(Window) ?? new System.Collections.Generic.List<ApplicationWindow> { Window };
             for (int i = 1; i <= Utilities.WorkspaceManager.WorkspaceCount; i++)
             {
                 int wsNum = i;
@@ -219,8 +218,11 @@ namespace RetroBar.Controls
                 };
                 wsItem.Click += (_, _) =>
                 {
-                    foreach (var w in groupWindows)
-                        Utilities.WorkspaceManager.Instance.MoveWindowToWorkspace(w.Handle, wsNum);
+                    // Sending a single button to another workspace splits it from its group first -
+                    // otherwise the whole group would travel together, which defeats the point of
+                    // targeting one button.
+                    Host?.UngroupWindow(Window);
+                    Utilities.WorkspaceManager.Instance.MoveWindowToWorkspace(Window.Handle, wsNum);
                 };
                 SendToWorkspaceMenuItem.Items.Add(wsItem);
             }
