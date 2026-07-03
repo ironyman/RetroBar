@@ -16,6 +16,8 @@ namespace RetroBar.Utilities
         private int _currentWorkspace = 1;
         private readonly Dictionary<IntPtr, int> _windowWorkspaces = new();
         private readonly HashSet<IntPtr> _hiddenByUs = new();
+        private readonly HashSet<IntPtr> _pinnedWindows = new();
+        private readonly Dictionary<IntPtr, bool> _elevationCache = new();
         private ObservableCollection<ApplicationWindow> _windows;
 
         // Remembers each workspace's button order (by handle) so that when a workspace's windows
@@ -79,6 +81,8 @@ namespace RetroBar.Utilities
 
                     int workspace = GetWindowWorkspace(w.Handle);
                     _windowWorkspaces.Remove(w.Handle);
+                    _pinnedWindows.Remove(w.Handle);
+                    _elevationCache.Remove(w.Handle);
 
                     if (_workspaceOrder.TryGetValue(workspace, out var order))
                         order.Remove(w.Handle);
@@ -138,21 +142,63 @@ namespace RetroBar.Utilities
 
         public bool IsHiddenByUs(IntPtr hwnd) => _hiddenByUs.Contains(hwnd);
 
+        // Elevated processes ignore our ShowWindow(SW_HIDE) calls (UIPI blocks the window
+        // messages a lower-integrity process needs to send to change their visibility), so they're
+        // effectively stuck showing on every workspace regardless of what we do. Rather than fight
+        // that, we treat them as pinned - and since the user has no way to un-stick them either,
+        // pinning can't be turned off for these windows.
+        public bool IsElevatedWindow(IntPtr hwnd)
+        {
+            if (_elevationCache.TryGetValue(hwnd, out bool cached))
+                return cached;
+
+            bool elevated = ElevationHelper.IsWindowElevated(hwnd);
+            _elevationCache[hwnd] = elevated;
+            return elevated;
+        }
+
+        public bool CanTogglePin(IntPtr hwnd) => !IsElevatedWindow(hwnd);
+
+        public bool IsPinned(IntPtr hwnd) => _pinnedWindows.Contains(hwnd) || IsElevatedWindow(hwnd);
+
+        public void SetPinned(IntPtr hwnd, bool pinned)
+        {
+            if (IsElevatedWindow(hwnd)) return; // always pinned, can't be changed
+
+            if (pinned)
+            {
+                if (_pinnedWindows.Add(hwnd) && _hiddenByUs.Remove(hwnd))
+                    SetWindowVisible(hwnd, true);
+            }
+            else
+            {
+                _pinnedWindows.Remove(hwnd);
+
+                if (GetWindowWorkspace(hwnd) != _currentWorkspace && _hiddenByUs.Add(hwnd))
+                    SetWindowVisible(hwnd, false);
+            }
+
+            WorkspaceSwitched?.Invoke(this, EventArgs.Empty);
+        }
+
         public void MoveWindowToWorkspace(IntPtr hwnd, int workspace)
         {
             if (workspace < 1 || workspace > WorkspaceCount) return;
 
             _windowWorkspaces[hwnd] = workspace;
 
-            if (workspace != _currentWorkspace)
+            if (!IsPinned(hwnd))
             {
-                if (_hiddenByUs.Add(hwnd))
-                    SetWindowVisible(hwnd, false);
-            }
-            else
-            {
-                if (_hiddenByUs.Remove(hwnd))
-                    SetWindowVisible(hwnd, true);
+                if (workspace != _currentWorkspace)
+                {
+                    if (_hiddenByUs.Add(hwnd))
+                        SetWindowVisible(hwnd, false);
+                }
+                else
+                {
+                    if (_hiddenByUs.Remove(hwnd))
+                        SetWindowVisible(hwnd, true);
+                }
             }
 
             WorkspaceSwitched?.Invoke(this, EventArgs.Empty);
@@ -166,10 +212,11 @@ namespace RetroBar.Utilities
             ShellLogger.Info($"WorkspaceManager: Switching to workspace {workspace}");
             _currentWorkspace = workspace;
 
-            // Hide currently-visible windows that don't belong to the new workspace.
+            // Hide currently-visible windows that don't belong to the new workspace. Pinned windows
+            // (including elevated ones we can't hide anyway) stay visible on every workspace.
             foreach (var window in _windows.ToList())
             {
-                if (GetWindowWorkspace(window.Handle) != workspace)
+                if (GetWindowWorkspace(window.Handle) != workspace && !IsPinned(window.Handle))
                 {
                     if (_hiddenByUs.Add(window.Handle))
                         SetWindowVisible(window.Handle, false);
@@ -198,8 +245,9 @@ namespace RetroBar.Utilities
         public int GetWorkspaceWindowCount(int workspace)
         {
             // Count from the persistent map, not _windows: windows on other workspaces
-            // are hidden and have been dropped from the shell's collection.
-            return _windowWorkspaces.Count(kvp => kvp.Value == workspace && IsWindow(kvp.Key));
+            // are hidden and have been dropped from the shell's collection. Pinned windows show on
+            // every workspace, so they count toward all of them, not just their assigned home.
+            return _windowWorkspaces.Count(kvp => IsWindow(kvp.Key) && (kvp.Value == workspace || IsPinned(kvp.Key)));
         }
 
         // Pulls every window from every other workspace onto the current one, so nothing

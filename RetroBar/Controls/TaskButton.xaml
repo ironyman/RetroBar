@@ -115,6 +115,10 @@
                 <Separator />
                 <MenuItem Header="Send to workspace"
                           Name="SendToWorkspaceMenuItem" />
+                <MenuItem Header="{DynamicResource pin_all_workspaces}"
+                          Click="PinAllWorkspacesMenuItem_OnClick"
+                          Name="PinAllWorkspacesMenuItem"
+                          IsCheckable="True" />
                 <Separator />
                 <MenuItem Header="{DynamicResource always_on_top}"
                           Click="AlwaysOnTopMenuItem_OnClick"

@@ -225,6 +225,9 @@ namespace RetroBar.Controls
                 SendToWorkspaceMenuItem.Items.Add(wsItem);
             }
 
+            PinAllWorkspacesMenuItem.IsChecked = Utilities.WorkspaceManager.Instance.IsPinned(Window.Handle);
+            PinAllWorkspacesMenuItem.IsEnabled = Utilities.WorkspaceManager.Instance.CanTogglePin(Window.Handle);
+
             int exStyle = NativeMethods.GetWindowLong(Window.Handle, NativeMethods.GWL_EXSTYLE);
             AlwaysOnTopMenuItem.IsChecked = (exStyle & (int)NativeMethods.ExtendedWindowStyles.WS_EX_TOPMOST) != 0;
             CenterOnScreenMenuItem.IsEnabled = wss != NativeMethods.WindowShowStyle.ShowMinimized;
@@ -322,6 +325,13 @@ namespace RetroBar.Controls
         private void UncollapseAllMenuItem_OnClick(object sender, RoutedEventArgs e)
         {
             Host?.UncollapseAllGroups();
+        }
+
+        private void PinAllWorkspacesMenuItem_OnClick(object sender, RoutedEventArgs e)
+        {
+            if (Window == null) return;
+            // IsChecked reflects the new desired state after WPF toggles it on click.
+            Utilities.WorkspaceManager.Instance.SetPinned(Window.Handle, PinAllWorkspacesMenuItem.IsChecked);
         }
 
         private void AlwaysOnTopMenuItem_OnClick(object sender, RoutedEventArgs e)

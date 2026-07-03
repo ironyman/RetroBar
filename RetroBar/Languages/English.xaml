@@ -148,6 +148,7 @@
     <s:String x:Key="uncollapse_all">_Uncollapse all</s:String>
     <s:String x:Key="gather_all_windows">_Gather all windows</s:String>
     <s:String x:Key="always_on_top">Always on _top</s:String>
+    <s:String x:Key="pin_all_workspaces">_Pin to all workspaces</s:String>
     <s:String x:Key="center_on_screen">C_enter on screen</s:String>
     <s:String x:Key="open_containing_folder">Open _containing folder</s:String>
     <s:String x:Key="close">_Close</s:String>
