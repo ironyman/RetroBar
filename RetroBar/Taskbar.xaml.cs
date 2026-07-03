@@ -559,6 +559,26 @@ namespace RetroBar
             }
         }
 
+        private static void SetGatherAllWindowsEnabled(ContextMenu menu)
+        {
+            bool hasOtherWindows = false;
+            for (int i = 1; i <= WorkspaceManager.WorkspaceCount; i++)
+            {
+                if (i == WorkspaceManager.Instance.CurrentWorkspace) continue;
+                if (WorkspaceManager.Instance.GetWorkspaceWindowCount(i) > 0)
+                {
+                    hasOtherWindows = true;
+                    break;
+                }
+            }
+
+            foreach (var item in menu.Items)
+            {
+                if (item is MenuItem mi && mi.Tag as string == "gather-all-windows")
+                    mi.IsEnabled = hasOtherWindows;
+            }
+        }
+
         private static void RefreshWorkspaceMenuItems(ContextMenu menu)
         {
             MenuItem wsMenu = null;
@@ -712,6 +732,7 @@ namespace RetroBar
             {
                 RefreshWorkspaceMenuItems(menu);
                 SetBtopMenuItemVisibility(menu);
+                SetGatherAllWindowsEnabled(menu);
                 _openTrayContextMenu = menu;
 
                 _trayContextMenuHook = new LowLevelMouseHook();
@@ -725,6 +746,11 @@ namespace RetroBar
             {
                 UpdateAvailableMenuItem.Visibility = Visibility.Visible;
             }
+        }
+
+        private void GatherAllWindowsMenuItem_OnClick(object sender, RoutedEventArgs e)
+        {
+            WorkspaceManager.Instance.GatherWindows();
         }
 
         private void CollapseAllGroupsMenuItem_OnClick(object sender, RoutedEventArgs e)

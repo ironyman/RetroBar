@@ -202,6 +202,34 @@ namespace RetroBar.Utilities
             return _windowWorkspaces.Count(kvp => kvp.Value == workspace && IsWindow(kvp.Key));
         }
 
+        // Pulls every window from every other workspace onto the current one, so nothing
+        // stays stranded out of sight. Mirrors MoveWindowToWorkspace's show/hide bookkeeping
+        // but fires WorkspaceSwitched once for the whole batch instead of once per window.
+        public void GatherWindows()
+        {
+            bool changed = false;
+
+            foreach (var hwnd in _windowWorkspaces.Keys.ToList())
+            {
+                if (_windowWorkspaces[hwnd] == _currentWorkspace)
+                    continue;
+
+                _windowWorkspaces[hwnd] = _currentWorkspace;
+                changed = true;
+
+                if (_hiddenByUs.Remove(hwnd))
+                {
+                    if (IsWindow(hwnd))
+                        SetWindowVisible(hwnd, true);
+                    else
+                        _windowWorkspaces.Remove(hwnd); // closed while hidden — forget it
+                }
+            }
+
+            if (changed)
+                WorkspaceSwitched?.Invoke(this, EventArgs.Empty);
+        }
+
         public void ShowAllWindows()
         {
             foreach (var hwnd in _hiddenByUs.ToList())

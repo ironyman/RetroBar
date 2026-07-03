@@ -144,6 +144,9 @@
         <ContextMenu Opened="ContextMenu_Opened" Closed="TrayContextMenu_Closed">
             <MenuItem Header="Workspaces" Tag="workspace-switcher" />
             <Separator Tag="workspace-sep" />
+            <MenuItem Header="{DynamicResource gather_all_windows}"
+                      Click="GatherAllWindowsMenuItem_OnClick"
+                      Tag="gather-all-windows" />
             <MenuItem Header="{DynamicResource collapse_all}"
                       Click="CollapseAllGroupsMenuItem_OnClick"
                       Name="CollapseAllGroupsMenuItem" />
