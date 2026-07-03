@@ -727,6 +727,16 @@ namespace RetroBar
             }
         }
 
+        private void CollapseAllGroupsMenuItem_OnClick(object sender, RoutedEventArgs e)
+        {
+            TaskListControl?.CollapseAllGroups();
+        }
+
+        private void UncollapseAllGroupsMenuItem_OnClick(object sender, RoutedEventArgs e)
+        {
+            TaskListControl?.UncollapseAllGroups();
+        }
+
         private void SetTimeMenuItem_OnClick(object sender, RoutedEventArgs e)
         {
             ShellHelper.StartProcess("timedate.cpl");

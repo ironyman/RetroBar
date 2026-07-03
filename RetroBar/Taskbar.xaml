@@ -133,7 +133,8 @@
                              RelativeSource="{RelativeSource Mode=FindAncestor, AncestorType=Window}" />
                 </DockPanel.Dock>
             </controls:InputLanguage>
-            <controls:TaskList VerticalAlignment="Stretch"
+            <controls:TaskList x:Name="TaskListControl"
+                               VerticalAlignment="Stretch"
                                Margin="-1,0,0,0"
                                Host="{Binding RelativeSource={RelativeSource Mode=FindAncestor, AncestorType=Window}}"
                                Tasks="{Binding Tasks}"></controls:TaskList>
@@ -143,6 +144,13 @@
         <ContextMenu Opened="ContextMenu_Opened" Closed="TrayContextMenu_Closed">
             <MenuItem Header="Workspaces" Tag="workspace-switcher" />
             <Separator Tag="workspace-sep" />
+            <MenuItem Header="{DynamicResource collapse_all}"
+                      Click="CollapseAllGroupsMenuItem_OnClick"
+                      Name="CollapseAllGroupsMenuItem" />
+            <MenuItem Header="{DynamicResource uncollapse_all}"
+                      Click="UncollapseAllGroupsMenuItem_OnClick"
+                      Name="UncollapseAllGroupsMenuItem" />
+            <Separator />
             <!-- TODO: Add when desk bands and additional taskbars are supported. -->
             <!--StaticResourceExtension ResourceKey="ToolbarsItem" />
             <Separator /-->
