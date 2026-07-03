@@ -2,6 +2,7 @@ using ManagedShell.AppBar;
 using ManagedShell.WindowsTasks;
 using ManagedShell.Common.Helpers;
 using ManagedShell.Common.Logging;
+using ManagedShell.Interop;
 using RetroBar.Utilities;
 using System;
 using System.Collections.Generic;
@@ -111,6 +112,7 @@ namespace RetroBar.Controls
 
                 Settings.Instance.PropertyChanged += Settings_PropertyChanged;
                 Host.hotkeyManager.TaskbarHotkeyPressed += TaskList_TaskbarHotkeyPressed;
+                Host.hotkeyManager.CycleGroupWindowsHotkeyPressed += TaskList_CycleGroupWindowsHotkeyPressed;
                 WorkspaceManager.Instance.WorkspaceSwitched += WorkspaceManager_WorkspaceSwitched;
 
                 isLoaded = true;
@@ -179,6 +181,93 @@ namespace RetroBar.Controls
                 catch (ArgumentOutOfRangeException) { }
             }
         }
+
+        // Alt+` cycles focus to the next window in the currently active window's task group. If
+        // the active window isn't part of a tiled group, fall back to cycling through all
+        // on-screen, non-occluded windows in clockwise order instead.
+        private void TaskList_CycleGroupWindowsHotkeyPressed(object sender, EventArgs e)
+        {
+            var activeWindow = rawSource?.FirstOrDefault(w => w.State == ApplicationWindow.WindowState.Active);
+            if (activeWindow == null) return;
+
+            var group = _groupManager.GetGroupForWindow(activeWindow);
+            if (group != null && group.IsTiled && group.Windows.Count > 1)
+            {
+                var ordered = _groupManager.GetGroupWindowsOrdered(activeWindow, rawSource);
+                int index = ordered.IndexOf(activeWindow);
+                if (index >= 0)
+                {
+                    ordered[(index + 1) % ordered.Count].BringToFront();
+                    return;
+                }
+            }
+
+            CycleNonOccludedWindowsClockwise(activeWindow);
+        }
+
+        // Cycles focus among all currently visible, non-occluded windows (across the whole
+        // desktop, not just this taskbar's collection), moving to whichever candidate is next in
+        // clockwise order around the group's center point.
+        private void CycleNonOccludedWindowsClockwise(ApplicationWindow activeWindow)
+        {
+            if (rawSource == null) return;
+
+            var candidates = rawSource
+                .Where(w => w.ShowInTaskbar && !w.IsMinimized)
+                .Select(w => (window: w, center: GetWindowCenter(w.Handle)))
+                .Where(x => x.center.HasValue && !IsOccluded(x.window.Handle))
+                .ToList();
+
+            if (candidates.Count < 2) return;
+
+            double centroidX = candidates.Average(x => x.center.Value.X);
+            double centroidY = candidates.Average(x => x.center.Value.Y);
+
+            var orderedClockwise = candidates
+                .Select(x => (x.window, angle: NormalizeAngle(Math.Atan2(x.center.Value.Y - centroidY, x.center.Value.X - centroidX))))
+                .OrderBy(x => x.angle)
+                .Select(x => x.window)
+                .ToList();
+
+            int index = orderedClockwise.IndexOf(activeWindow);
+            var next = index >= 0
+                ? orderedClockwise[(index + 1) % orderedClockwise.Count]
+                : orderedClockwise[0];
+
+            if (next != activeWindow)
+                next.BringToFront();
+        }
+
+        // The center point of a window's rect, or null if its rect couldn't be retrieved.
+        private static Point? GetWindowCenter(IntPtr handle)
+        {
+            if (!NativeMethods.GetWindowRect(handle, out var rect)) return null;
+            return new Point((rect.Left + rect.Right) / 2.0, (rect.Top + rect.Bottom) / 2.0);
+        }
+
+        // A window is occluded if some other visible, non-minimized window above it in Z order
+        // fully covers its rect. Walking GW_HWNDPREV from a window steps through the windows
+        // stacked above it (toward the top of the Z order).
+        private static bool IsOccluded(IntPtr handle)
+        {
+            if (!NativeMethods.GetWindowRect(handle, out var rect)) return true;
+
+            IntPtr current = NativeMethods.GetWindow(handle, NativeMethods.GetWindow_Cmd.GW_HWNDPREV);
+            while (current != IntPtr.Zero)
+            {
+                if (NativeMethods.IsWindowVisible(current) && !NativeMethods.IsIconic(current)
+                    && NativeMethods.GetWindowRect(current, out var otherRect)
+                    && otherRect.Left <= rect.Left && otherRect.Top <= rect.Top
+                    && otherRect.Right >= rect.Right && otherRect.Bottom >= rect.Bottom)
+                {
+                    return true;
+                }
+                current = NativeMethods.GetWindow(current, NativeMethods.GetWindow_Cmd.GW_HWNDPREV);
+            }
+            return false;
+        }
+
+        private static double NormalizeAngle(double angle) => angle < 0 ? angle + 2 * Math.PI : angle;
 
         private bool Tasks_Filter(object obj)
         {
@@ -251,6 +340,7 @@ namespace RetroBar.Controls
             if (Host != null)
             {
                 Host.hotkeyManager.TaskbarHotkeyPressed -= TaskList_TaskbarHotkeyPressed;
+                Host.hotkeyManager.CycleGroupWindowsHotkeyPressed -= TaskList_CycleGroupWindowsHotkeyPressed;
             }
 
             Settings.Instance.PropertyChanged -= Settings_PropertyChanged;
@@ -715,6 +805,11 @@ namespace RetroBar.Controls
         // Ctrl+drag: move only the pressed button, leaving its groupmates in place, so it can be
         // reordered within the group or pulled out of it entirely.
         private bool _dragIsSolo;
+        // The group the dragged (primary) button belonged to when the drag started, if any -
+        // regardless of solo vs group drag. Used to forbid merge-hover for an already-grouped
+        // button even when its groupmates aren't currently rendered (so groups never merge into
+        // other groups; only ungrouped buttons may join a group).
+        private TaskGroup _dragOriginalGroup;
         // The group the solo-dragged button belonged to when the drag started (null if ungrouped).
         private TaskGroup _dragSoloOriginalGroup;
         // Block-list index range (inclusive) occupied by _dragSoloOriginalGroup's remaining
@@ -807,6 +902,13 @@ namespace RetroBar.Controls
             var draggedWindow = _dragContainer.DataContext as ApplicationWindow;
             var draggedGroup = draggedWindow != null ? _groupManager.GetGroupForWindow(draggedWindow) : null;
 
+            // A collapsed group shows only its representative button; there is no meaningful "pull
+            // one button out" gesture while the rest are hidden, so ignore ctrl and drag the whole
+            // group as a block (the collapsed-group handling in CommitDrag keeps its members together).
+            if (soloDrag && draggedGroup != null && draggedGroup.IsCollapsed && draggedGroup.Windows.Count > 1)
+                soloDrag = false;
+
+            _dragOriginalGroup = draggedGroup;
             _dragIsSolo = soloDrag;
             _dragSoloOriginalGroup = soloDrag ? draggedGroup : null;
 
@@ -1063,8 +1165,10 @@ namespace RetroBar.Controls
                 }
             }
             // Group hover detection (merge into a new/different group): only when dragging a
-            // single ungrouped button.
-            else if (_dragGroupMemberIndices.Count == 0)
+            // single button that isn't already in a group. Checking _dragOriginalGroup (not just
+            // the rendered member count) ensures a grouped button whose groupmates aren't currently
+            // shown still can't drag its whole group into another group - groups never merge.
+            else if (_dragOriginalGroup == null && _dragGroupMemberIndices.Count == 0)
             {
                 var draggedRect = GetDraggedRect(delta, horizontal);
                 int overlapIdx = -1;
@@ -1294,6 +1398,41 @@ namespace RetroBar.Controls
                 }
             }
 
+            // A collapsed group shows only its representative button, so the reorder above (which
+            // positions windows by their compact *visible* order) both moves just the dragged
+            // group's representative — leaving its hidden members behind — and can shove an
+            // unrelated collapsed group's hidden members apart when a visible window lands at a
+            // source index that falls inside that group's run. Either way uncollapsing would reveal
+            // a group split across the taskbar. Re-contiguate every collapsed group so each one's
+            // hidden members sit right after its representative again, keeping groups intact.
+            if (source != null)
+            {
+                foreach (var group in _groupManager.Groups.ToList())
+                {
+                    if (!group.IsCollapsed || group.Windows.Count <= 1
+                        || _groupManager.GroupHasActiveWindow(group))
+                        continue;
+
+                    // Members in current source order (the representative is leftmost, so first).
+                    var members = group.Windows
+                        .Select(w => (w, idx: source.IndexOf(w)))
+                        .Where(x => x.idx >= 0)
+                        .OrderBy(x => x.idx)
+                        .Select(x => x.w)
+                        .ToList();
+
+                    for (int i = 1; i < members.Count; i++)
+                    {
+                        int cur = source.IndexOf(members[i]);
+                        int prev = source.IndexOf(members[i - 1]);
+                        if (cur < 0 || prev < 0) continue;
+                        int target = prev + 1;
+                        if (cur < target) target--;
+                        if (cur != target) source.Move(cur, target);
+                    }
+                }
+            }
+
             // Ctrl+drag of a single button out of/within its group: commit whatever in/out-of-group
             // state was last shown live during the drag. Skipped if a hover-merge already moved it
             // into a different group (that path resolves membership itself).
@@ -1331,6 +1470,7 @@ namespace RetroBar.Controls
             _dragBlockStartPos = new List<int>();
             _dragBlockGap = 0;
             _dragIsSolo = false;
+            _dragOriginalGroup = null;
             _dragSoloOriginalGroup = null;
             _dragSoloGroupBlockFirst = -1;
             _dragSoloGroupBlockLast = -1;

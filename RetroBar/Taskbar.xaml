@@ -142,6 +142,9 @@
     </ContentControl>
     <appbar:AppBarWindow.ContextMenu>
         <ContextMenu Opened="ContextMenu_Opened" Closed="TrayContextMenu_Closed">
+            <StaticResourceExtension ResourceKey="LockTaskbarMenuItem" />
+            <StaticResourceExtension ResourceKey="PropertiesMenuItem" />
+            <Separator />
             <MenuItem Header="Workspaces" Tag="workspace-switcher" />
             <Separator Tag="workspace-sep" />
             <MenuItem Header="{DynamicResource gather_all_windows}"
@@ -165,8 +168,6 @@
                       Click="UpdateAvailableMenuItem_OnClick"
                       FontWeight="Bold"
                       Visibility="Collapsed" />
-            <StaticResourceExtension ResourceKey="LockTaskbarMenuItem" />
-            <StaticResourceExtension ResourceKey="PropertiesMenuItem" />
             <StaticResourceExtension ResourceKey="ExitMenuItem" />
         </ContextMenu>
     </appbar:AppBarWindow.ContextMenu>
