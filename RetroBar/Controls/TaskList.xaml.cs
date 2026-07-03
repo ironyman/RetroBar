@@ -9,6 +9,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -191,7 +192,7 @@ namespace RetroBar.Controls
             if (activeWindow == null) return;
 
             var group = _groupManager.GetGroupForWindow(activeWindow);
-            if (group != null && group.IsTiled && group.Windows.Count > 1)
+            if (group != null && group.Windows.Count > 1)
             {
                 var ordered = _groupManager.GetGroupWindowsOrdered(activeWindow, rawSource);
                 int index = ordered.IndexOf(activeWindow);
@@ -212,59 +213,119 @@ namespace RetroBar.Controls
         {
             if (rawSource == null) return;
 
-            var candidates = rawSource
-                .Where(w => w.ShowInTaskbar && !w.IsMinimized)
-                .Select(w => (window: w, center: GetWindowCenter(w.Handle)))
-                .Where(x => x.center.HasValue && !IsOccluded(x.window.Handle))
-                .ToList();
+            ShellLogger.Debug($"CycleGroup: active={DescribeWindow(activeWindow.Handle, activeWindow.Title)}");
 
-            if (candidates.Count < 2) return;
+            var candidates = new List<(ApplicationWindow window, Point center)>();
+            foreach (var w in rawSource)
+            {
+                if (!w.ShowInTaskbar || w.IsMinimized)
+                {
+                    ShellLogger.Debug($"CycleGroup:   skip (not shown/minimized) {DescribeWindow(w.Handle, w.Title)}");
+                    continue;
+                }
 
-            double centroidX = candidates.Average(x => x.center.Value.X);
-            double centroidY = candidates.Average(x => x.center.Value.Y);
+                TryGetVisibleRect(w.Handle, out var rect);
+                bool occluded = IsOccluded(w.Handle);
+                ShellLogger.Debug($"CycleGroup:   {(occluded ? "OCCLUDED" : "candidate")} {DescribeWindow(w.Handle, w.Title)} rect=[{rect.Left},{rect.Top},{rect.Right},{rect.Bottom}]");
+
+                if (!occluded)
+                    candidates.Add((w, new Point((rect.Left + rect.Right) / 2.0, (rect.Top + rect.Bottom) / 2.0)));
+            }
+
+            if (candidates.Count < 2)
+            {
+                ShellLogger.Debug($"CycleGroup: only {candidates.Count} candidate(s), nothing to cycle to");
+                return;
+            }
+
+            double centroidX = candidates.Average(x => x.center.X);
+            double centroidY = candidates.Average(x => x.center.Y);
+            ShellLogger.Debug($"CycleGroup: centroid=({centroidX:F0},{centroidY:F0})");
+
+            // Clockwise order: computes the centroid of all candidate
+            // window centers, then sorts candidates by angle (atan2)
+            // around that centroid — this produces a clockwise sweep
+            // in normal screen coordinates.
 
             var orderedClockwise = candidates
-                .Select(x => (x.window, angle: NormalizeAngle(Math.Atan2(x.center.Value.Y - centroidY, x.center.Value.X - centroidX))))
+                .Select(x => (x.window, x.center, angle: NormalizeAngle(Math.Atan2(x.center.Y - centroidY, x.center.X - centroidX))))
                 .OrderBy(x => x.angle)
-                .Select(x => x.window)
                 .ToList();
 
-            int index = orderedClockwise.IndexOf(activeWindow);
+            foreach (var x in orderedClockwise)
+                ShellLogger.Debug($"CycleGroup:   ordered angle={x.angle * 180 / Math.PI:F0}deg center=({x.center.X:F0},{x.center.Y:F0}) {DescribeWindow(x.window.Handle, x.window.Title)}");
+
+            var ordered = orderedClockwise.Select(x => x.window).ToList();
+            int index = ordered.IndexOf(activeWindow);
             var next = index >= 0
-                ? orderedClockwise[(index + 1) % orderedClockwise.Count]
-                : orderedClockwise[0];
+                ? ordered[(index + 1) % ordered.Count]
+                : ordered[0];
+
+            ShellLogger.Debug($"CycleGroup: next={DescribeWindow(next.Handle, next.Title)}");
 
             if (next != activeWindow)
                 next.BringToFront();
         }
 
-        // The center point of a window's rect, or null if its rect couldn't be retrieved.
-        private static Point? GetWindowCenter(IntPtr handle)
-        {
-            if (!NativeMethods.GetWindowRect(handle, out var rect)) return null;
-            return new Point((rect.Left + rect.Right) / 2.0, (rect.Top + rect.Bottom) / 2.0);
-        }
+        private static string DescribeWindow(IntPtr handle, string title) => $"'{title}' (0x{handle:X})";
 
-        // A window is occluded if some other visible, non-minimized window above it in Z order
-        // fully covers its rect. Walking GW_HWNDPREV from a window steps through the windows
-        // stacked above it (toward the top of the Z order).
+        // A window is occluded if the windows stacked above it in Z order (visible, non-minimized,
+        // non-cloaked) jointly cover its entire rect - not necessarily any single one of them. Two
+        // windows Aero-snapped side by side, for example, can together fully hide a window behind
+        // them without either individually containing it, so this accumulates a region rather than
+        // checking single-window containment. Walking GW_HWNDPREV from a window steps through the
+        // windows stacked above it (toward the top of the Z order).
         private static bool IsOccluded(IntPtr handle)
         {
-            if (!NativeMethods.GetWindowRect(handle, out var rect)) return true;
+            if (!TryGetVisibleRect(handle, out var rect)) return true;
+
+            using var region = new System.Drawing.Region(ToRectangle(rect));
+            using var g = System.Drawing.Graphics.FromHwnd(IntPtr.Zero);
 
             IntPtr current = NativeMethods.GetWindow(handle, NativeMethods.GetWindow_Cmd.GW_HWNDPREV);
             while (current != IntPtr.Zero)
             {
-                if (NativeMethods.IsWindowVisible(current) && !NativeMethods.IsIconic(current)
-                    && NativeMethods.GetWindowRect(current, out var otherRect)
-                    && otherRect.Left <= rect.Left && otherRect.Top <= rect.Top
-                    && otherRect.Right >= rect.Right && otherRect.Bottom >= rect.Bottom)
+                if (NativeMethods.IsWindowVisible(current) && !NativeMethods.IsIconic(current) && !IsCloaked(current)
+                    && TryGetVisibleRect(current, out var otherRect))
                 {
-                    return true;
+                    region.Exclude(ToRectangle(otherRect));
+                    if (region.IsEmpty(g))
+                        return true;
                 }
                 current = NativeMethods.GetWindow(current, NativeMethods.GetWindow_Cmd.GW_HWNDPREV);
             }
             return false;
+        }
+
+        private static System.Drawing.Rectangle ToRectangle(NativeMethods.Rect rect)
+            => System.Drawing.Rectangle.FromLTRB(rect.Left, rect.Top, rect.Right, rect.Bottom);
+
+        // GetWindowRect includes the invisible resize-border/shadow margin that Windows 10/11
+        // pads around top-level windows, which can make adjacent Aero-snapped windows appear to
+        // overlap (or a window appear larger than it visually is) even though nothing is actually
+        // drawn there. DWMWA_EXTENDED_FRAME_BOUNDS reports the true on-screen visual bounds, so
+        // prefer it and only fall back to GetWindowRect where DWM composition isn't available.
+        private static bool TryGetVisibleRect(IntPtr handle, out NativeMethods.Rect rect)
+        {
+            if (EnvironmentHelper.IsWindows8OrBetter)
+            {
+                int cbSize = Marshal.SizeOf(typeof(NativeMethods.Rect));
+                if (NativeMethods.DwmGetWindowAttribute(handle, NativeMethods.DWMWINDOWATTRIBUTE.DWMWA_EXTENDED_FRAME_BOUNDS, out rect, cbSize) == 0)
+                    return true;
+            }
+
+            return NativeMethods.GetWindowRect(handle, out rect);
+        }
+
+        // Cloaked windows (e.g. UWP apps on another virtual desktop, or suspended) still report
+        // IsWindowVisible() == true, so they must be filtered out separately or they show up as
+        // full-screen "occluders" that were never actually drawn on top of anything.
+        private static bool IsCloaked(IntPtr handle)
+        {
+            if (!EnvironmentHelper.IsWindows8OrBetter) return false;
+
+            int cbSize = Marshal.SizeOf(typeof(uint));
+            return NativeMethods.DwmGetWindowAttribute(handle, NativeMethods.DWMWINDOWATTRIBUTE.DWMWA_CLOAKED, out uint cloaked, cbSize) == 0 && cloaked > 0;
         }
 
         private static double NormalizeAngle(double angle) => angle < 0 ? angle + 2 * Math.PI : angle;

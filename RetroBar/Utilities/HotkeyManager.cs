@@ -76,6 +76,7 @@ namespace RetroBar.Utilities
                 _listenerWindow.RegisterNumberHotkeys();
 
             _listenerWindow.RegisterVirtualDesktopHotkeys();
+            _listenerWindow.RegisterGroupCycleHotkey();
         }
 
         // State for Win+D foreground tracking across two consecutive presses
@@ -193,6 +194,7 @@ namespace RetroBar.Utilities
 
         public event EventHandler<TaskbarHotkeyEventArgs> TaskbarHotkeyPressed;
         public event EventHandler FocusTrayHotkeyPressed;
+        public event EventHandler CycleGroupWindowsHotkeyPressed;
         public event Action EscapeKeyDown;
 
         private void Settings_PropertyChanged(object sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -213,6 +215,7 @@ namespace RetroBar.Utilities
             internal bool IsBRegistered { get; private set; }
             private const int HOTKEY_ID_FOCUS_TRAY = 20;
             private const int HOTKEY_ID_SHOW_DESKTOP = 21;
+            private const int HOTKEY_ID_CYCLE_GROUP = 22; // Alt+` cycles windows within the active window's task group
             private const int HOTKEY_ID_VDESK_SWITCH = 30; // +0..+8 for Win+F1..Win+F9
             private const int HOTKEY_ID_VDESK_MOVE = 40;   // +0..+8 for Win+Shift+F1..Win+Shift+F9
             private const int VDESK_HOTKEY_COUNT = 9;
@@ -248,6 +251,12 @@ namespace RetroBar.Utilities
                     if (hotkeyId == HOTKEY_ID_SHOW_DESKTOP)
                     {
                         _manager.DoToggleDesktop();
+                        return;
+                    }
+
+                    if (hotkeyId == HOTKEY_ID_CYCLE_GROUP)
+                    {
+                        _manager.CycleGroupWindowsHotkeyPressed?.Invoke(this, EventArgs.Empty);
                         return;
                     }
 
@@ -316,6 +325,22 @@ namespace RetroBar.Utilities
                 catch (Exception ex)
                 {
                     ShellLogger.Warning($"HotkeyManager: Exception during RegisterSystemHotkeys - {ex.Message}");
+                }
+            }
+
+            public void RegisterGroupCycleHotkey()
+            {
+                ShellLogger.Info("HotkeyManager: Registering group cycle hotkey (Alt+`)");
+                try
+                {
+                    if (RegisterHotKey(Handle, HOTKEY_ID_CYCLE_GROUP, (uint)(MOD.ALT | MOD.NOREPEAT), (uint)VK.OEM_3))
+                        _registeredSystemHotkeys.Add(HOTKEY_ID_CYCLE_GROUP);
+                    else
+                        ShellLogger.Warning("HotkeyManager: Failed to register Alt+` for group cycling");
+                }
+                catch (Exception ex)
+                {
+                    ShellLogger.Warning($"HotkeyManager: Exception during RegisterGroupCycleHotkey - {ex.Message}");
                 }
             }
 
