@@ -42,7 +42,8 @@ namespace RetroBar.Controls
         public TaskGroup GetGroupForWindow(ApplicationWindow window)
             => _taskGroups.FirstOrDefault(g => g.Windows.Contains(window));
 
-        private static TaskButton GetTaskButton(ContentPresenter cp)
+        // internal so TaskList can look up a group member's button to run slide animations.
+        internal static TaskButton GetTaskButton(ContentPresenter cp)
         {
             if (cp == null || System.Windows.Media.VisualTreeHelper.GetChildrenCount(cp) == 0) return null;
             return System.Windows.Media.VisualTreeHelper.GetChild(cp, 0) as TaskButton;

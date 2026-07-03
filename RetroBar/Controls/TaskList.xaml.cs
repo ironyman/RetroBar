@@ -435,15 +435,51 @@ namespace RetroBar.Controls
 
         // A collapsed group only hides its non-representative members while none of them is the
         // active window - re-run the filter whenever a grouped window's active state changes so a
-        // newly-activated hidden member is revealed (and re-hidden once it's no longer active).
+        // newly-activated hidden member is revealed (sliding in), and re-hidden once it's no
+        // longer active (sliding out).
+        //
+        // TasksService.WINDOWACTIVATED sets the previously-active window to Inactive and the
+        // newly-active one to Active as two separate, synchronous property sets (old-Inactive
+        // first). Switching focus between two windows already inside the same expanded group
+        // therefore raises this handler twice in a row: on the first (deactivate) call,
+        // GroupHasActiveWindow briefly reads false even though the group is about to have a new
+        // active member and shouldn't collapse at all. Deferring the hide decision to just after
+        // the current dispatch lets the second (activate) call - which runs synchronously right
+        // after, within the same message handling - land first and correct that reading.
         private void Window_PropertyChangedForGroupCollapse(object sender, PropertyChangedEventArgs e)
         {
             if (e.PropertyName != nameof(ApplicationWindow.State) || sender is not ApplicationWindow window)
                 return;
 
             var group = _groupManager.GetGroupForWindow(window);
-            if (group != null && group.IsCollapsed)
+            if (group == null || !group.IsCollapsed)
+                return;
+
+            var source = taskbarItems?.SourceCollection as ObservableCollection<ApplicationWindow>;
+            var representative = _groupManager.GetCollapsedRepresentative(group, source);
+            var others = group.Windows.Where(w => !ReferenceEquals(w, representative)).ToList();
+            if (others.Count == 0) return;
+
+            // All non-representative members share the same visibility, so any one of them stands
+            // in for "is the group currently expanded".
+            bool currentlyVisible = TasksList.ItemContainerGenerator.ContainerFromItem(others[0]) != null;
+
+            if (_groupManager.GroupHasActiveWindow(group))
+            {
+                if (currentlyVisible) return; // already expanded - a same-group focus swap, not a reveal
+                MarkForReveal(others);
                 taskbarItems?.Refresh();
+            }
+            else if (currentlyVisible)
+            {
+                Dispatcher.BeginInvoke(DispatcherPriority.Send, (Action)(() =>
+                {
+                    // Re-check: a same-group focus swap's matching activate call may have already
+                    // landed, in which case the group never actually lost its last active window.
+                    if (_groupManager.GroupHasActiveWindow(group)) return;
+                    AnimateHide(others, () => taskbarItems?.Refresh());
+                }));
+            }
         }
 
         private void GroupedWindows_CollectionChanged(object sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
@@ -678,14 +714,139 @@ namespace RetroBar.Controls
         // wires TaskList's own drag mechanics into it.
         private readonly TaskGroupManager _groupManager;
 
+        // Windows whose next TaskButton.Loaded should slide in (width 0 -> full) regardless of
+        // the general SlideTaskbarButtons setting - set right before a Refresh that reveals a
+        // window previously hidden by a collapsed group, so TaskButton_OnLoaded can consume it.
+        private readonly HashSet<ApplicationWindow> _pendingReveal = new HashSet<ApplicationWindow>();
+
         // Called by TaskButton.Loaded so new buttons pick up their group color.
         public void RefreshGroupVisual(TaskButton btn) => _groupManager.RefreshGroupVisual(btn);
 
-        // Called from TaskButton right-click → Remove from group.
+        // Called by TaskButton.Loaded to check (and clear) whether this window's button should
+        // force a slide-in animation instead of following the general SlideTaskbarButtons setting.
+        public bool ConsumeRevealAnimation(ApplicationWindow window)
+            => window != null && _pendingReveal.Remove(window);
+
+        // The set of windows currently hidden because they're a non-representative member of a
+        // collapsed group - mirrors the condition in Tasks_Filter. Used to detect windows that
+        // transition from hidden to visible around a group operation, so those reveals can slide in.
+        private HashSet<ApplicationWindow> GetHiddenGroupMembers()
+        {
+            var hidden = new HashSet<ApplicationWindow>();
+            var source = taskbarItems?.SourceCollection as ObservableCollection<ApplicationWindow>;
+            if (source == null) return hidden;
+
+            foreach (var window in source)
+            {
+                var group = _groupManager.GetGroupForWindow(window);
+                if (group == null || !group.IsCollapsed || _groupManager.GroupHasActiveWindow(group))
+                    continue;
+
+                var representative = _groupManager.GetCollapsedRepresentative(group, source);
+                if (!ReferenceEquals(window, representative))
+                    hidden.Add(window);
+            }
+
+            return hidden;
+        }
+
+        // Marks windows so their next Loaded slides in, then clears any leftovers once layout has
+        // settled (anything actually revealed will have already consumed its entry by then).
+        private void MarkForReveal(IEnumerable<ApplicationWindow> windows)
+        {
+            bool any = false;
+            foreach (var w in windows)
+            {
+                _pendingReveal.Add(w);
+                any = true;
+            }
+
+            if (any)
+            {
+                Dispatcher.BeginInvoke(DispatcherPriority.Loaded, (Action)(() => _pendingReveal.Clear()));
+            }
+        }
+
+        // Called from TaskButton right-click → Remove from group. Removing the visible
+        // representative of a still-collapsed group can both reveal a new representative and
+        // leave the old one behind as a standalone (still-visible) button, so diff hidden-member
+        // state before/after rather than assuming only reveals are possible. Ungrouping also
+        // repositions the window next to its old group (TaskGroupManager.UngroupWindow moves it in
+        // the source collection), so slide every button whose slot shifted from its old position
+        // to its new one instead of letting the reflow snap instantly.
         public void UngroupWindow(ApplicationWindow window)
         {
+            var hiddenBefore = GetHiddenGroupMembers();
+            var positionsBefore = CaptureButtonPositions();
+
             _groupManager.UngroupWindow(window, taskbarItems?.SourceCollection as ObservableCollection<ApplicationWindow>);
-            taskbarItems?.Refresh();
+
+            var hiddenAfter = GetHiddenGroupMembers();
+            var revealed = hiddenBefore.Where(w => !hiddenAfter.Contains(w)).ToList();
+            var newlyHidden = hiddenAfter.Where(w => !hiddenBefore.Contains(w)).ToList();
+
+            AnimateHide(newlyHidden, () =>
+            {
+                MarkForReveal(revealed);
+                taskbarItems?.Refresh();
+                AnimateLayoutChanges(positionsBefore);
+            });
+        }
+
+        // Snapshots every currently-rendered button's position relative to the WrapPanel, keyed by
+        // window - the "First" half of a FLIP reposition animation.
+        private Dictionary<ApplicationWindow, Point> CaptureButtonPositions()
+        {
+            var positions = new Dictionary<ApplicationWindow, Point>();
+            var panel = FindItemsPanel<WrapPanel>(TasksList);
+            if (panel == null) return positions;
+
+            for (int i = 0; i < TasksList.Items.Count; i++)
+            {
+                if (TasksList.ItemContainerGenerator.ContainerFromIndex(i) is not ContentPresenter cp) continue;
+                if (cp.DataContext is not ApplicationWindow w) continue;
+                positions[w] = cp.TranslatePoint(new Point(0, 0), panel);
+            }
+
+            return positions;
+        }
+
+        // The "Last, Invert, Play" half of a FLIP reposition animation: once the layout has
+        // settled after a mutation, any button whose slot moved from its position in oldPositions
+        // is snapped back to its old spot with a translate transform and animated to (0,0) - i.e.
+        // it visibly slides from where it was to where it now belongs. Containers may have been
+        // entirely recreated by a Refresh() in between (a full container Reset), so this re-looks
+        // up each window's current container rather than reusing the ones captured earlier.
+        private void AnimateLayoutChanges(Dictionary<ApplicationWindow, Point> oldPositions)
+        {
+            if (oldPositions.Count == 0) return;
+
+            Dispatcher.BeginInvoke(DispatcherPriority.Loaded, (Action)(() =>
+            {
+                var panel = FindItemsPanel<WrapPanel>(TasksList);
+                if (panel == null) return;
+
+                for (int i = 0; i < TasksList.Items.Count; i++)
+                {
+                    if (TasksList.ItemContainerGenerator.ContainerFromIndex(i) is not ContentPresenter cp) continue;
+                    if (cp.DataContext is not ApplicationWindow w) continue;
+                    if (!oldPositions.TryGetValue(w, out Point oldPos)) continue;
+
+                    Point newPos = cp.TranslatePoint(new Point(0, 0), panel);
+                    Vector delta = oldPos - newPos;
+                    if (Math.Abs(delta.X) < 0.5 && Math.Abs(delta.Y) < 0.5) continue;
+
+                    cp.RenderTransform = null;
+                    var transform = new TranslateTransform(delta.X, delta.Y);
+                    cp.RenderTransform = transform;
+
+                    var ease = new SineEase { EasingMode = EasingMode.EaseOut };
+                    transform.BeginAnimation(TranslateTransform.XProperty,
+                        new DoubleAnimation(delta.X, 0, TimeSpan.FromMilliseconds(200)) { EasingFunction = ease });
+                    transform.BeginAnimation(TranslateTransform.YProperty,
+                        new DoubleAnimation(delta.Y, 0, TimeSpan.FromMilliseconds(200)) { EasingFunction = ease });
+                }
+            }));
         }
 
         // Called from TaskButton right-click → New color for group.
@@ -714,25 +875,101 @@ namespace RetroBar.Controls
                 group.SetTiledRects(windows);
         }
 
-        // Collapses the group containing the given window.
+        // Collapses the group containing the given window, sliding out the members that will
+        // become hidden before actually applying the filter change.
         public void CollapseGroup(ApplicationWindow window)
         {
-            _groupManager.CollapseGroup(window);
-            taskbarItems?.Refresh();
+            var group = _groupManager.GetGroupForWindow(window);
+            if (group == null || group.IsCollapsed) return;
+
+            AnimateGroupsCollapsing(new List<TaskGroup> { group }, () =>
+            {
+                _groupManager.CollapseGroup(window);
+                taskbarItems?.Refresh();
+            });
         }
 
-        // Collapses all task groups.
+        // Collapses all task groups, sliding out every member that will become hidden.
         public void CollapseAllGroups()
         {
-            _groupManager.CollapseAllGroups();
+            var groups = _groupManager.Groups.Where(g => !g.IsCollapsed).ToList();
+            if (groups.Count == 0) return;
+
+            AnimateGroupsCollapsing(groups, () =>
+            {
+                _groupManager.CollapseAllGroups();
+                taskbarItems?.Refresh();
+            });
+        }
+
+        // Uncollapses all task groups, sliding in every member that becomes visible.
+        public void UncollapseAllGroups()
+        {
+            var hiddenBefore = GetHiddenGroupMembers();
+            _groupManager.UncollapseAllGroups();
+            MarkForReveal(hiddenBefore);
             taskbarItems?.Refresh();
         }
 
-        // Uncollapses all task groups.
-        public void UncollapseAllGroups()
+        // Slides out the soon-to-be-hidden members of the given (not-yet-collapsed) groups, then
+        // invokes onComplete once every animation has finished (or immediately if there was
+        // nothing to animate - e.g. every group's collapse is currently suspended by an active
+        // window).
+        private void AnimateGroupsCollapsing(List<TaskGroup> groups, Action onComplete)
         {
-            _groupManager.UncollapseAllGroups();
-            taskbarItems?.Refresh();
+            var source = taskbarItems?.SourceCollection as ObservableCollection<ApplicationWindow>;
+            var toHide = new List<ApplicationWindow>();
+
+            if (source != null)
+            {
+                foreach (var group in groups)
+                {
+                    if (_groupManager.GroupHasActiveWindow(group)) continue;
+
+                    var representative = _groupManager.GetCollapsedRepresentative(group, source);
+                    toHide.AddRange(group.Windows.Where(w => !ReferenceEquals(w, representative)));
+                }
+            }
+
+            AnimateHide(toHide, onComplete);
+        }
+
+        // Slides each of the given windows' currently-rendered buttons out to width 0, then
+        // invokes onComplete once every animation has finished (or immediately if there was
+        // nothing to animate - e.g. a window's button isn't currently rendered, or the taskbar is
+        // vertical, where a width slide wouldn't read as a slide).
+        private void AnimateHide(IEnumerable<ApplicationWindow> windows, Action onComplete)
+        {
+            bool horizontal = Host?.Orientation != Orientation.Vertical;
+            var buttons = new List<TaskButton>();
+
+            if (horizontal)
+            {
+                foreach (var w in windows)
+                {
+                    if (TasksList.ItemContainerGenerator.ContainerFromItem(w) is ContentPresenter cp &&
+                        TaskGroupManager.GetTaskButton(cp) is TaskButton btn)
+                    {
+                        buttons.Add(btn);
+                    }
+                }
+            }
+
+            if (buttons.Count == 0)
+            {
+                onComplete();
+                return;
+            }
+
+            int remaining = buttons.Count;
+            foreach (var btn in buttons)
+            {
+                btn.AnimateSlideOut(() =>
+                {
+                    if (--remaining <= 0)
+                        onComplete();
+                });
+            }
         }
 
         private void StartGroupHover(int targetIndex) => _groupManager.StartHover(targetIndex, OnGroupHoverConfirmed);

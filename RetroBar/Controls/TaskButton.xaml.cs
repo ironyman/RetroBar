@@ -2,6 +2,7 @@ using System;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
@@ -42,6 +43,26 @@ namespace RetroBar.Controls
         private LowLevelMouseHook _contextMenuHook;
         private IntPtr _contextMenuForegroundHook = IntPtr.Zero;
         private NativeMethods.WinEventProc _contextMenuForegroundHookProc; // field keeps delegate alive
+
+        [DllImport("user32.dll")] private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+        [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
+
+        // A plain SetForegroundWindow call is silently denied by Windows' foreground-lock rules often
+        // enough in practice (e.g. right-clicking back from an elevated window) that the context menu
+        // popup - owned by us - can end up z-ordered behind us instead of above. AttachThreadInput
+        // temporarily joins our thread's input queue to the current foreground window's thread, which
+        // grants SetForegroundWindow permission much more reliably. Same technique as
+        // NotifyIconList.ForceForeground.
+        private static void ForceForeground(IntPtr hwnd)
+        {
+            IntPtr fg = NativeMethods.GetForegroundWindow();
+            if (fg == hwnd) return;
+            uint fgTid = NativeMethods.GetWindowThreadProcessId(fg, out _);
+            uint myTid = GetCurrentThreadId();
+            bool attached = fgTid != 0 && fgTid != myTid && AttachThreadInput(fgTid, myTid, true);
+            NativeMethods.SetForegroundWindow(hwnd);
+            if (attached) AttachThreadInput(fgTid, myTid, false);
+        }
 
         public TaskButton()
         {
@@ -109,13 +130,48 @@ namespace RetroBar.Controls
                 Window.PropertyChanged += Window_PropertyChanged;
             }
 
-            if (Settings.Instance.SlideTaskbarButtons && Host?.Host?.Orientation == Orientation.Horizontal)
+            // A reveal caused by expanding/uncollapsing a group or removing a window from a
+            // collapsed group always slides in, regardless of the general new-window setting -
+            // but a width slide only reads correctly on a horizontal taskbar either way.
+            bool forceSlideIn = Host?.ConsumeRevealAnimation(Window) == true;
+
+            if (Host?.Host?.Orientation == Orientation.Horizontal && (forceSlideIn || Settings.Instance.SlideTaskbarButtons))
             {
                 Animate();
             }
 
             Host?.RefreshGroupVisual(this);
             _isLoaded = true;
+        }
+
+        // Shrinks the button to width 0 and invokes onCompleted once the animation finishes -
+        // used to slide a button out of view before it's actually removed from the taskbar (e.g.
+        // a group collapsing), since WPF's Unloaded event fires too late in removal to animate.
+        public void AnimateSlideOut(Action onCompleted)
+        {
+            IsHitTestVisible = false;
+
+            var ease = new SineEase { EasingMode = EasingMode.EaseInOut };
+            DoubleAnimation animation = new DoubleAnimation
+            {
+                From = ActualWidth,
+                To = 0,
+                Duration = new Duration(TimeSpan.FromMilliseconds(180)),
+                FillBehavior = FillBehavior.HoldEnd,
+                EasingFunction = ease
+            };
+
+            if (onCompleted != null)
+            {
+                animation.Completed += (_, _) => onCompleted();
+            }
+
+            Storyboard.SetTarget(animation, this);
+            Storyboard.SetTargetProperty(animation, new PropertyPath(WidthProperty));
+
+            Storyboard storyboard = new Storyboard();
+            storyboard.Children.Add(animation);
+            storyboard.Begin();
         }
 
         public void SetGroupColor(Color? color)
@@ -188,7 +244,7 @@ namespace RetroBar.Controls
             // handler), so we're already topmost by the time the popup is z-ordered - otherwise our
             // foreground/topmost change can land after the popup HWND is positioned and push it behind us.
             if (Host?.Host?.Handle is { } fgSelf && fgSelf != IntPtr.Zero)
-                NativeMethods.SetForegroundWindow(fgSelf);
+                ForceForeground(fgSelf);
 
             if (Window == null)
             {
