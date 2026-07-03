@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.Linq;
+using System.Text;
 using ManagedShell.Common.Logging;
 using ManagedShell.WindowsTasks;
 using static ManagedShell.Interop.NativeMethods;
@@ -94,6 +95,35 @@ namespace RetroBar.Utilities
                 // it's restored the same way after switching away and back.
                 _workspaceOrder[_currentWorkspace] = _windows.Select(w => w.Handle).ToList();
             }
+            else if (e.Action == NotifyCollectionChangedAction.Reset)
+            {
+                // TasksService.Dispose() (called by ExplorerMonitor on every TaskbarCreated - explorer
+                // restart, monitor/DPI changes, etc.) does Windows.Clear(), which raises Reset with no
+                // OldItems. None of the per-item cleanup above runs, so anything we were tracking is
+                // orphaned unless we sweep it here.
+                PruneOrphanedWindows();
+            }
+        }
+
+        // Drops tracking for any hwnd that isn't currently in the live collection and isn't
+        // deliberately hidden by us for another workspace - i.e. it has no legitimate reason to
+        // still be here. Left unpruned, these inflate GetWorkspaceWindowCount forever.
+        private void PruneOrphanedWindows()
+        {
+            var live = new HashSet<IntPtr>(_windows.Select(w => w.Handle));
+
+            foreach (var hwnd in _windowWorkspaces.Keys.ToList())
+            {
+                if (live.Contains(hwnd) || _hiddenByUs.Contains(hwnd))
+                    continue;
+
+                _windowWorkspaces.Remove(hwnd);
+                _pinnedWindows.Remove(hwnd);
+                _elevationCache.Remove(hwnd);
+            }
+
+            foreach (var order in _workspaceOrder.Values)
+                order.RemoveAll(h => !live.Contains(h) && !_hiddenByUs.Contains(h));
         }
 
         private List<IntPtr> GetOrCreateWorkspaceOrder(int workspace)
@@ -248,6 +278,44 @@ namespace RetroBar.Utilities
             // are hidden and have been dropped from the shell's collection. Pinned windows show on
             // every workspace, so they count toward all of them, not just their assigned home.
             return _windowWorkspaces.Count(kvp => IsWindow(kvp.Key) && (kvp.Value == workspace || IsPinned(kvp.Key)));
+        }
+
+        // Dumps every hwnd WorkspaceManager is tracking, so a mismatch between the count shown in
+        // the "Send to Workspace" menu and what's actually visible can be diagnosed from the log
+        // (build.ps1 -openlog) instead of guessing. Flags entries whose hwnd is no longer a real
+        // window and entries whose tracked hwnd doesn't correspond to a window currently in the
+        // shell's collection, which is what a leaked/reused handle looks like.
+        public void LogWindowTracking()
+        {
+            var liveHandles = new HashSet<IntPtr>(_windows?.Select(w => w.Handle) ?? Enumerable.Empty<IntPtr>());
+
+            ShellLogger.Info($"WorkspaceManager: tracking {_windowWorkspaces.Count} hwnd(s), current workspace {_currentWorkspace}, {_hiddenByUs.Count} hidden-by-us");
+
+            foreach (var kvp in _windowWorkspaces.OrderBy(kvp => kvp.Value))
+            {
+                IntPtr hwnd = kvp.Key;
+                bool isWindow = IsWindow(hwnd);
+                bool inLiveCollection = liveHandles.Contains(hwnd);
+                string title = "<dead handle>";
+                string className = "";
+
+                if (isWindow)
+                {
+                    var titleBuilder = new StringBuilder(256);
+                    GetWindowText(hwnd, titleBuilder, titleBuilder.Capacity);
+                    title = titleBuilder.ToString();
+
+                    var classBuilder = new StringBuilder(256);
+                    GetClassName(hwnd, classBuilder, classBuilder.Capacity);
+                    className = classBuilder.ToString();
+                }
+
+                string flag = !isWindow ? " [STALE: not a window anymore]"
+                    : !inLiveCollection && kvp.Value == _currentWorkspace && !_hiddenByUs.Contains(hwnd) ? " [SUSPECT: valid handle but not in taskbar collection]"
+                    : "";
+
+                ShellLogger.Info($"  hwnd=0x{hwnd.ToInt64():X} workspace={kvp.Value} isWindow={isWindow} pinned={IsPinned(hwnd)} elevated={IsElevatedWindow(hwnd)} hiddenByUs={_hiddenByUs.Contains(hwnd)} inLiveCollection={inLiveCollection} class=\"{className}\" title=\"{title}\"{flag}");
+            }
         }
 
         // Pulls every window from every other workspace onto the current one, so nothing

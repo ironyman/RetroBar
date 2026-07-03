@@ -203,6 +203,8 @@ namespace RetroBar.Controls
             MoveMenuItem.IsEnabled = wss == NativeMethods.WindowShowStyle.ShowNormal;
             SizeMenuItem.IsEnabled = wss == NativeMethods.WindowShowStyle.ShowNormal && (ws & (int)NativeMethods.WindowStyles.WS_MAXIMIZEBOX) != 0;
 
+            Utilities.WorkspaceManager.Instance.LogWindowTracking();
+
             SendToWorkspaceMenuItem.Items.Clear();
             for (int i = 1; i <= Utilities.WorkspaceManager.WorkspaceCount; i++)
             {
@@ -501,7 +503,7 @@ namespace RetroBar.Controls
         private void ContextMenu_OpenedOrClosed(object sender, RoutedEventArgs e)
         {
             string eventName = e.RoutedEvent == ContextMenu.OpenedEvent ? "Opened" : "Closed";
-            ShellLogger.Debug($"TaskButton: ContextMenu_{eventName} for {Window?.Title}, flyoutActive={ShellFlyoutHelper.IsShellFlyoutActive()}, stack={new StackTrace(true)}");
+            // ShellLogger.Debug($"TaskButton: ContextMenu_{eventName} for {Window?.Title}, flyoutActive={ShellFlyoutHelper.IsShellFlyoutActive()}, stack={new StackTrace(true)}");
 
             BindingOperations.GetMultiBindingExpression(AppButton, StyleProperty).UpdateTarget();
 
