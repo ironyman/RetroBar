@@ -108,14 +108,6 @@
                           Click="CollapseGroupMenuItem_OnClick"
                           Name="CollapseGroupMenuItem"
                           Visibility="Collapsed" />
-                <MenuItem Header="{DynamicResource collapse_all}"
-                          Click="CollapseAllMenuItem_OnClick"
-                          Name="CollapseAllMenuItem"
-                          Visibility="Collapsed" />
-                <MenuItem Header="{DynamicResource uncollapse_all}"
-                          Click="UncollapseAllMenuItem_OnClick"
-                          Name="UncollapseAllMenuItem"
-                          Visibility="Collapsed" />
                 <Separator />
                 <MenuItem Header="Send to workspace"
                           Name="SendToWorkspaceMenuItem" />

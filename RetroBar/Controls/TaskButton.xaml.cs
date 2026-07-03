@@ -129,8 +129,6 @@ namespace RetroBar.Controls
             TileGroupMenuItem.Visibility = vis;
             GroupNewColorMenuItem.Visibility = vis;
             CollapseGroupMenuItem.Visibility = vis;
-            CollapseAllMenuItem.Visibility = vis;
-            UncollapseAllMenuItem.Visibility = vis;
         }
 
         private void Window_GetButtonRect(ref NativeMethods.ShortRect rect)
@@ -335,16 +333,6 @@ namespace RetroBar.Controls
         private void CollapseGroupMenuItem_OnClick(object sender, RoutedEventArgs e)
         {
             Host?.CollapseGroup(Window);
-        }
-
-        private void CollapseAllMenuItem_OnClick(object sender, RoutedEventArgs e)
-        {
-            Host?.CollapseAllGroups();
-        }
-
-        private void UncollapseAllMenuItem_OnClick(object sender, RoutedEventArgs e)
-        {
-            Host?.UncollapseAllGroups();
         }
 
         private void PinAllWorkspacesMenuItem_OnClick(object sender, RoutedEventArgs e)
