@@ -180,6 +180,16 @@ namespace RetroBar.Controls
             ShellFlyoutHelper.DismissIfActive();
             ShellLogger.Debug($"TaskButton: DismissIfActive returned, proceeding with context menu");
 
+            // The taskbar is WS_EX_NOACTIVATE, so opening the menu does not make us the foreground
+            // window on its own, and if an elevated window was already foreground, clicking back into
+            // it is not a foreground *change* - so neither the mouse hook (UIPI-blocked over elevated
+            // windows) nor the foreground hook would fire to close the menu. Force ourselves to the
+            // foreground here, before the ContextMenu popup is created (rather than in its Opened
+            // handler), so we're already topmost by the time the popup is z-ordered - otherwise our
+            // foreground/topmost change can land after the popup HWND is positioned and push it behind us.
+            if (Host?.Host?.Handle is { } fgSelf && fgSelf != IntPtr.Zero)
+                NativeMethods.SetForegroundWindow(fgSelf);
+
             if (Window == null)
             {
                 return;
@@ -541,14 +551,6 @@ namespace RetroBar.Controls
                 _contextMenuHook = new LowLevelMouseHook();
                 _contextMenuHook.LowLevelMouseEvent += OnContextMenuMouseEvent;
                 _contextMenuHook.Initialize();
-
-                // The taskbar is WS_EX_NOACTIVATE, so opening the menu does not make us the foreground
-                // window. If an elevated window was already foreground, clicking back into it is not a
-                // foreground *change* and neither the mouse hook (UIPI-blocked over elevated windows)
-                // nor the foreground hook below would fire. Force ourselves to the foreground so any
-                // subsequent click into another window is a real foreground change that closes the menu.
-                if (Host?.Host?.Handle is { } fgSelf && fgSelf != IntPtr.Zero)
-                    NativeMethods.SetForegroundWindow(fgSelf);
 
                 if (Host?.Host?.hotkeyManager is { } hm)
                     hm.EscapeKeyDown += CloseContextMenuOnEscape;
