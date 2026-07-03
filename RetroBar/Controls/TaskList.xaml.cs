@@ -649,7 +649,7 @@ namespace RetroBar.Controls
         // current block gap. Strictly nested between two former groupmates is unambiguously in;
         // having swapped a full block past the group is unambiguously out. Sitting right at the
         // group's edge (gap touches the group with nothing in between) is ambiguous, so it only
-        // flips to "out" once the dragged button has moved past that edge by half its own width.
+        // flips to "out" once the dragged button has moved past that edge by a quarter of its own width.
         private bool IsSoloStillWithinGroup(int gap, Vector delta, bool horizontal)
         {
             if (gap > _dragSoloGroupBlockFirst && gap < _dragSoloGroupBlockLast + 1)
@@ -666,14 +666,14 @@ namespace RetroBar.Controls
                 var firstRect = GetSlotRect(_dragSoloGroupFirstItemIdx);
                 double edge = horizontal ? firstRect.Left : firstRect.Top;
                 double draggedTrailing = horizontal ? draggedRect.Right : draggedRect.Bottom;
-                return edge - draggedTrailing <= buttonWidth / 2.0;
+                return edge - draggedTrailing <= buttonWidth / 4.0;
             }
             else
             {
                 var lastRect = GetSlotRect(_dragSoloGroupLastItemIdx);
                 double edge = horizontal ? lastRect.Right : lastRect.Bottom;
                 double draggedLeading = horizontal ? draggedRect.Left : draggedRect.Top;
-                return draggedLeading - edge <= buttonWidth / 2.0;
+                return draggedLeading - edge <= buttonWidth / 4.0;
             }
         }
 
@@ -722,9 +722,9 @@ namespace RetroBar.Controls
         private int _dragSoloGroupLastItemIdx = -1;
         // Whether the solo-dragged button currently counts as still belonging to its original
         // group. Leaving fires once the dragged button, sitting right at the group's edge, has
-        // moved half its own width past that edge; re-entering requires the same dwell-to-confirm
-        // hover gesture as an ordinary group merge, restricted to only that original group - this
-        // asymmetry is the intended hysteresis between leaving and rejoining.
+        // moved a quarter of its own width past that edge; re-entering requires the same
+        // dwell-to-confirm hover gesture as an ordinary group merge, restricted to only that
+        // original group - this asymmetry is the intended hysteresis between leaving and rejoining.
         private bool _dragSoloInGroup;
 
         // A hover-merge was confirmed on this drag, so the grouped collection needs a Refresh to
@@ -1015,10 +1015,10 @@ namespace RetroBar.Controls
             // Leaving the original group: while nested between two former groupmates it's
             // unambiguously still in; once it's swapped a full block past the group it's
             // unambiguously out. Right at the group's edge (touching it, nothing between) is the
-            // ambiguous case - only counts as "left" once it's dragged half its own width past that
-            // edge. Checked every move (not just on gap change) since distance keeps growing as the
-            // cursor keeps moving even once the gap itself stops changing. Re-entering is
-            // deliberately harder - see the rejoin-hover handling below.
+            // ambiguous case - only counts as "left" once it's dragged a quarter of its own width
+            // past that edge. Checked every move (not just on gap change) since distance keeps
+            // growing as the cursor keeps moving even once the gap itself stops changing. Re-entering
+            // is deliberately harder - see the rejoin-hover handling below.
             if (_dragIsSolo && _dragSoloOriginalGroup != null && _dragSoloInGroup
                 && !IsSoloStillWithinGroup(gap, delta, horizontal))
             {
