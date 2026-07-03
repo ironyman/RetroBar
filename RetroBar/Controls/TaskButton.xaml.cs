@@ -393,13 +393,38 @@ namespace RetroBar.Controls
 
         private void AppButton_OnClick(object sender, RoutedEventArgs e)
         {
-            if (PressedWindowState == ApplicationWindow.WindowState.Active && Window?.CanMinimize == true)
+            if (Window == null) return;
+
+            var group = Host?.GetGroupForWindow(Window);
+            if (group != null && group.IsTiled && group.Windows.Count > 1)
             {
-                Window?.Minimize();
+                if (group.AreAllWindowsStillTiled())
+                {
+                    // Group is still tiled: bring all members to foreground, then
+                    // activate the clicked one specifically.
+                    foreach (var w in group.Windows)
+                        w.BringToFront();
+                    Window.BringToFront();
+                }
+                else
+                {
+                    // A window moved away from its tile position; forget the tiling.
+                    group.ClearTiled();
+                    if (PressedWindowState == ApplicationWindow.WindowState.Active && Window.CanMinimize)
+                        Window.Minimize();
+                    else
+                        Window.BringToFront();
+                }
+                return;
+            }
+
+            if (PressedWindowState == ApplicationWindow.WindowState.Active && Window.CanMinimize)
+            {
+                Window.Minimize();
             }
             else
             {
-                Window?.BringToFront();
+                Window.BringToFront();
             }
         }
 

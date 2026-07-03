@@ -169,6 +169,7 @@ namespace RetroBar.Controls
             if (window == null) return;
             var group = GetGroupForWindow(window);
             if (group == null) return;
+            group.ClearTiled();
             _taskGroups.Remove(group);
             UpdateGroupVisuals();
         }
@@ -249,6 +250,7 @@ namespace RetroBar.Controls
                 var group = GetGroupForWindow(window);
                 if (group == null) continue;
                 group.Windows.Remove(window);
+                group.ClearTiled();
                 if (group.Windows.Count <= 1)
                     _taskGroups.Remove(group);
                 changed = true;
@@ -270,7 +272,11 @@ namespace RetroBar.Controls
             foreach (var g in _taskGroups.ToList())
             {
                 int removedCount = g.Windows.RemoveAll(w => !remaining.Contains(w.Handle) && keepHidden?.Invoke(w.Handle) != true);
-                if (removedCount > 0) changed = true;
+                if (removedCount > 0)
+                {
+                    g.ClearTiled();
+                    changed = true;
+                }
                 if (g.Windows.Count <= 1)
                 {
                     _taskGroups.Remove(g);
@@ -395,6 +401,7 @@ namespace RetroBar.Controls
             foreach (var g in oldGroups)
             {
                 g.Windows.RemoveAll(w => _provisionalGroup.Windows.Contains(w));
+                g.ClearTiled();
                 if (g.Windows.Count <= 1)
                     _taskGroups.Remove(g);
             }
@@ -419,6 +426,7 @@ namespace RetroBar.Controls
             if (!stillInGroup)
             {
                 originalGroup.Windows.Remove(window);
+                originalGroup.ClearTiled();
                 if (originalGroup.Windows.Count <= 1)
                     _taskGroups.Remove(originalGroup);
             }

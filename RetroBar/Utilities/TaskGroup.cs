@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Windows.Media;
+using ManagedShell.Interop;
 using ManagedShell.WindowsTasks;
 
 namespace RetroBar.Utilities
@@ -13,11 +14,57 @@ namespace RetroBar.Utilities
         public bool IsCollapsed { get; set; }
         public List<ApplicationWindow> Windows { get; } = new List<ApplicationWindow>();
 
+        // Whether this group was tiled via Aero Snap. Cleared when any member window
+        // moves away from its expected tile position.
+        public bool IsTiled { get; set; }
+        // Expected window rects after tiling (handle -> rect). Used to detect when a
+        // window leaves its tile position.
+        private Dictionary<IntPtr, NativeMethods.Rect> _tileRects;
+
         public TaskGroup() : this(RandomColor()) { }
 
         public TaskGroup(Color color)
         {
             GroupColor = color;
+        }
+
+        public void SetTiledRects(IReadOnlyList<ApplicationWindow> windows)
+        {
+            _tileRects = new Dictionary<IntPtr, NativeMethods.Rect>();
+            NativeMethods.Rect rect = new NativeMethods.Rect();
+            foreach (var w in windows)
+            {
+                if (NativeMethods.GetWindowRect(w.Handle, out rect))
+                    _tileRects[w.Handle] = rect;
+            }
+            IsTiled = true;
+        }
+
+        // Checks whether ALL member windows are still at their expected tile positions.
+        // Returns false if any window moved, or if there are no stored rects.
+        public bool AreAllWindowsStillTiled()
+        {
+            if (_tileRects == null || _tileRects.Count == 0)
+                return false;
+
+            NativeMethods.Rect actual = new NativeMethods.Rect();
+            foreach (var w in Windows)
+            {
+                if (!_tileRects.TryGetValue(w.Handle, out var expected))
+                    return false;
+                if (!NativeMethods.GetWindowRect(w.Handle, out actual))
+                    return false;
+                if (actual.Left != expected.Left || actual.Top != expected.Top
+                    || actual.Right != expected.Right || actual.Bottom != expected.Bottom)
+                    return false;
+            }
+            return true;
+        }
+
+        public void ClearTiled()
+        {
+            IsTiled = false;
+            _tileRects = null;
         }
 
         public static Color RandomColor()
