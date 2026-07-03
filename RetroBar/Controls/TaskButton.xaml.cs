@@ -411,7 +411,10 @@ namespace RetroBar.Controls
             if (Math.Abs(moved.X) >= SystemParameters.MinimumHorizontalDragDistance ||
                 Math.Abs(moved.Y) >= SystemParameters.MinimumVerticalDragDistance)
             {
-                Host.StartButtonDrag(this, e);
+                // Ctrl+drag moves just this button, so it can be pulled out of its task group or
+                // reordered within it, instead of dragging the whole group together.
+                bool soloDrag = Keyboard.IsKeyDown(Key.LeftCtrl) || Keyboard.IsKeyDown(Key.RightCtrl);
+                Host.StartButtonDrag(this, e, soloDrag);
             }
         }
 

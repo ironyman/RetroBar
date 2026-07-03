@@ -79,6 +79,14 @@ namespace RetroBar.Controls
             }
         }
 
+        // Live preview during a solo drag: shows/hides the dragged button's group-color border as
+        // it crosses in and out of its original group's span, ahead of the drag actually finishing.
+        public void SetSoloDragVisual(ContentPresenter cp, TaskGroup originalGroup, bool inGroup)
+        {
+            var btn = GetTaskButton(cp);
+            btn?.SetGroupColor(inGroup ? originalGroup.GroupColor : (Color?)null);
+        }
+
         // Called by TaskButton.Loaded so new buttons pick up their group color.
         public void RefreshGroupVisual(TaskButton btn)
         {
@@ -182,6 +190,26 @@ namespace RetroBar.Controls
             UpdateGroupVisuals();
         }
 
+        // Collapsing hides every member but one - if one of them is the active window, collapsing
+        // would hide the very button the user is currently working with, so leave the whole group
+        // expanded until none of its windows is active anymore.
+        public bool GroupHasActiveWindow(TaskGroup group)
+            => group.Windows.Any(w => w.State == ApplicationWindow.WindowState.Active);
+
+        // The single visible button for a collapsed group: whichever member sits leftmost
+        // (earliest) in the underlying source collection.
+        public ApplicationWindow GetCollapsedRepresentative(TaskGroup group, ObservableCollection<ApplicationWindow> source)
+        {
+            if (source == null) return group.Windows.FirstOrDefault();
+
+            return group.Windows
+                .Select(w => (window: w, index: source.IndexOf(w)))
+                .Where(x => x.index >= 0)
+                .OrderBy(x => x.index)
+                .Select(x => x.window)
+                .FirstOrDefault() ?? group.Windows.FirstOrDefault();
+        }
+
         public void CollapseAllGroups()
         {
             foreach (var group in _taskGroups)
@@ -220,14 +248,21 @@ namespace RetroBar.Controls
         // keepHidden lets a caller preserve membership for windows that are legitimately absent
         // from the source collection right now (e.g. hidden by WorkspaceManager for being on
         // another workspace) rather than genuinely gone.
-        public void ReconcileWithSource(IEnumerable<ApplicationWindow> remainingWindows, Func<IntPtr, bool> keepHidden = null)
+        public bool ReconcileWithSource(IEnumerable<ApplicationWindow> remainingWindows, Func<IntPtr, bool> keepHidden = null)
         {
+            bool changed = false;
             var remaining = new HashSet<IntPtr>(remainingWindows.Select(w => w.Handle));
             foreach (var g in _taskGroups.ToList())
             {
-                g.Windows.RemoveAll(w => !remaining.Contains(w.Handle) && keepHidden?.Invoke(w.Handle) != true);
-                if (g.Windows.Count <= 1) _taskGroups.Remove(g);
+                int removedCount = g.Windows.RemoveAll(w => !remaining.Contains(w.Handle) && keepHidden?.Invoke(w.Handle) != true);
+                if (removedCount > 0) changed = true;
+                if (g.Windows.Count <= 1)
+                {
+                    _taskGroups.Remove(g);
+                    changed = true;
+                }
             }
+            return changed;
         }
 
         // A grouped window just cloaked while still existing (not genuinely closed) - it may have
@@ -354,6 +389,26 @@ namespace RetroBar.Controls
             _provisionalGroup = null;
             _groupHoverConfirmed = false;
             _groupHoverTargetIndex = -1;
+        }
+
+        // Called after a ctrl+drag of a single button that started out belonging to a multi-member
+        // group finishes reordering the taskbar (and didn't merge into a different group via
+        // hover-confirm - that path already resolves membership itself). stillInGroup is the same
+        // live in/out-of-group state that was shown to the user during the drag (see
+        // TaskList's _dragSoloInGroup), so the committed membership never contradicts the preview.
+        public void ResolveSoloGroupDrag(ApplicationWindow window, TaskGroup originalGroup, bool stillInGroup)
+        {
+            if (window == null || originalGroup == null) return;
+            if (!_taskGroups.Contains(originalGroup) || !originalGroup.Windows.Contains(window)) return;
+
+            if (!stillInGroup)
+            {
+                originalGroup.Windows.Remove(window);
+                if (originalGroup.Windows.Count <= 1)
+                    _taskGroups.Remove(originalGroup);
+            }
+
+            UpdateGroupVisuals();
         }
     }
 }

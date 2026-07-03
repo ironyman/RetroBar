@@ -29,6 +29,7 @@ namespace RetroBar.Controls
         private double TaskButtonLeftMargin;
         private double TaskButtonRightMargin;
         private ICollectionView taskbarItems;
+        private ObservableCollection<ApplicationWindow> rawSource;
 
         public static DependencyProperty ButtonWidthProperty = DependencyProperty.Register(nameof(ButtonWidth), typeof(double), typeof(TaskList), new PropertyMetadata(new double()));
 
@@ -97,6 +98,16 @@ namespace RetroBar.Controls
                 }
 
                 TasksList.ItemsSource = taskbarItems;
+
+                // A collapsed group's hidden members can still become the active window (e.g. via
+                // Alt+Tab); track every window's State so the filter can be re-run and reveal it.
+                rawSource = taskbarItems?.SourceCollection as ObservableCollection<ApplicationWindow>;
+                if (rawSource != null)
+                {
+                    foreach (var w in rawSource)
+                        w.PropertyChanged += Window_PropertyChangedForGroupCollapse;
+                    rawSource.CollectionChanged += RawSource_CollectionChanged;
+                }
 
                 Settings.Instance.PropertyChanged += Settings_PropertyChanged;
                 Host.hotkeyManager.TaskbarHotkeyPressed += TaskList_TaskbarHotkeyPressed;
@@ -183,6 +194,19 @@ namespace RetroBar.Controls
                     return false;
                 }
 
+                // A collapsed group shows only its leftmost member; the rest are filtered out -
+                // unless one of them is the active window, in which case collapsing is suspended
+                // (hiding the button the user is actively using wouldn't make sense).
+                var group = _groupManager.GetGroupForWindow(window);
+                if (group != null && group.IsCollapsed && !_groupManager.GroupHasActiveWindow(group))
+                {
+                    var source = taskbarItems?.SourceCollection as ObservableCollection<ApplicationWindow>;
+                    if (!ReferenceEquals(_groupManager.GetCollapsedRepresentative(group, source), window))
+                    {
+                        return false;
+                    }
+                }
+
                 if (!Settings.Instance.ShowMultiMon || Settings.Instance.MultiMonMode == MultiMonOption.AllTaskbars)
                 {
                     return true;
@@ -216,6 +240,14 @@ namespace RetroBar.Controls
                 taskbarItems.Filter = null;
             }
 
+            if (rawSource != null)
+            {
+                foreach (var w in rawSource)
+                    w.PropertyChanged -= Window_PropertyChangedForGroupCollapse;
+                rawSource.CollectionChanged -= RawSource_CollectionChanged;
+                rawSource = null;
+            }
+
             if (Host != null)
             {
                 Host.hotkeyManager.TaskbarHotkeyPressed -= TaskList_TaskbarHotkeyPressed;
@@ -225,6 +257,42 @@ namespace RetroBar.Controls
             WorkspaceManager.Instance.WorkspaceSwitched -= WorkspaceManager_WorkspaceSwitched;
 
             isLoaded = false;
+        }
+
+        // Keeps the PropertyChanged subscription (used to notice a collapsed group's hidden
+        // member becoming active) in sync as windows are added to/removed from the taskbar.
+        private void RawSource_CollectionChanged(object sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+        {
+            if (e.OldItems != null)
+            {
+                foreach (ApplicationWindow w in e.OldItems)
+                    w.PropertyChanged -= Window_PropertyChangedForGroupCollapse;
+            }
+
+            if (e.NewItems != null)
+            {
+                foreach (ApplicationWindow w in e.NewItems)
+                    w.PropertyChanged += Window_PropertyChangedForGroupCollapse;
+            }
+
+            if (e.Action == System.Collections.Specialized.NotifyCollectionChangedAction.Reset && rawSource != null)
+            {
+                foreach (var w in rawSource)
+                    w.PropertyChanged += Window_PropertyChangedForGroupCollapse;
+            }
+        }
+
+        // A collapsed group only hides its non-representative members while none of them is the
+        // active window - re-run the filter whenever a grouped window's active state changes so a
+        // newly-activated hidden member is revealed (and re-hidden once it's no longer active).
+        private void Window_PropertyChangedForGroupCollapse(object sender, PropertyChangedEventArgs e)
+        {
+            if (e.PropertyName != nameof(ApplicationWindow.State) || sender is not ApplicationWindow window)
+                return;
+
+            var group = _groupManager.GetGroupForWindow(window);
+            if (group != null && group.IsCollapsed)
+                taskbarItems?.Refresh();
         }
 
         private void GroupedWindows_CollectionChanged(object sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
@@ -346,13 +414,15 @@ namespace RetroBar.Controls
                 // from the source collection right now but aren't gone - keep their membership.
                 if (taskbarItems?.SourceCollection is System.Collections.IEnumerable src)
                 {
-                    _groupManager.ReconcileWithSource(src.OfType<ApplicationWindow>(), WorkspaceManager.Instance.IsHiddenByUs);
+                    changed = _groupManager.ReconcileWithSource(src.OfType<ApplicationWindow>(), WorkspaceManager.Instance.IsHiddenByUs);
                 }
-                changed = true;
             }
 
             if (changed)
+            {
                 _groupManager.UpdateGroupVisuals();
+                taskbarItems?.Refresh();
+            }
         }
 
         private void TaskList_OnSizeChanged(object sender, SizeChangedEventArgs e)
@@ -462,27 +532,48 @@ namespace RetroBar.Controls
 
         // Called from TaskButton right-click → Remove from group.
         public void UngroupWindow(ApplicationWindow window)
-            => _groupManager.UngroupWindow(window, taskbarItems?.SourceCollection as ObservableCollection<ApplicationWindow>);
+        {
+            _groupManager.UngroupWindow(window, taskbarItems?.SourceCollection as ObservableCollection<ApplicationWindow>);
+            taskbarItems?.Refresh();
+        }
 
         // Called from TaskButton right-click → New color for group.
         public void ChangeGroupColor(ApplicationWindow window) => _groupManager.ChangeGroupColor(window);
 
         // Called from TaskButton right-click → Remove group.
-        public void RemoveGroup(ApplicationWindow window) => _groupManager.RemoveGroup(window);
+        public void RemoveGroup(ApplicationWindow window)
+        {
+            _groupManager.RemoveGroup(window);
+            taskbarItems?.Refresh();
+        }
 
         // Returns the windows belonging to the same group as the given window.
         public List<ApplicationWindow> GetGroupWindows(ApplicationWindow window) => _groupManager.GetGroupWindows(window);
 
         // Collapses the group containing the given window.
-        public void CollapseGroup(ApplicationWindow window) => _groupManager.CollapseGroup(window);
+        public void CollapseGroup(ApplicationWindow window)
+        {
+            _groupManager.CollapseGroup(window);
+            taskbarItems?.Refresh();
+        }
 
         // Collapses all task groups.
-        public void CollapseAllGroups() => _groupManager.CollapseAllGroups();
+        public void CollapseAllGroups()
+        {
+            _groupManager.CollapseAllGroups();
+            taskbarItems?.Refresh();
+        }
 
         // Uncollapses all task groups.
-        public void UncollapseAllGroups() => _groupManager.UncollapseAllGroups();
+        public void UncollapseAllGroups()
+        {
+            _groupManager.UncollapseAllGroups();
+            taskbarItems?.Refresh();
+        }
 
         private void StartGroupHover(int targetIndex) => _groupManager.StartHover(targetIndex, OnGroupHoverConfirmed);
+
+        private void StartSoloRejoinHover(int targetIndex) => _groupManager.StartHover(targetIndex, OnSoloRejoinConfirmed);
 
         private void CancelGroupHover() => _groupManager.CancelHover();
 
@@ -496,6 +587,17 @@ namespace RetroBar.Controls
             if (draggedWindow == null || targetWindow == null) return;
 
             _groupManager.ConfirmHover(draggedWindow, targetWindow);
+        }
+
+        // The dragged button dwelled long enough over one of its own former groupmates - it
+        // rejoins the group it started in. Membership was never actually changed mid-drag, so
+        // this just flips the live "still in group" flag and its visual back on.
+        private void OnSoloRejoinConfirmed()
+        {
+            if (!_isDragging || !_dragIsSolo || _dragSoloOriginalGroup == null || _dragContainer == null) return;
+
+            _dragSoloInGroup = true;
+            _groupManager.SetSoloDragVisual(_dragContainer, _dragSoloOriginalGroup, true);
         }
 
         // Computes the dragged button's bounding rect in WrapPanel coordinates,
@@ -536,6 +638,38 @@ namespace RetroBar.Controls
             return (float)(overlap / dim);
         }
 
+        // Whether a solo-dragged button still counts as part of _dragSoloOriginalGroup, given its
+        // current block gap. Strictly nested between two former groupmates is unambiguously in;
+        // having swapped a full block past the group is unambiguously out. Sitting right at the
+        // group's edge (gap touches the group with nothing in between) is ambiguous, so it only
+        // flips to "out" once the dragged button has moved past that edge by half its own width.
+        private bool IsSoloStillWithinGroup(int gap, Vector delta, bool horizontal)
+        {
+            if (gap > _dragSoloGroupBlockFirst && gap < _dragSoloGroupBlockLast + 1)
+                return true;
+
+            if (gap < _dragSoloGroupBlockFirst || gap > _dragSoloGroupBlockLast + 1)
+                return false;
+
+            var draggedRect = GetDraggedRect(delta, horizontal);
+            double buttonWidth = horizontal ? draggedRect.Width : draggedRect.Height;
+
+            if (gap == _dragSoloGroupBlockFirst)
+            {
+                var firstRect = GetSlotRect(_dragSoloGroupFirstItemIdx);
+                double edge = horizontal ? firstRect.Left : firstRect.Top;
+                double draggedTrailing = horizontal ? draggedRect.Right : draggedRect.Bottom;
+                return edge - draggedTrailing <= buttonWidth / 2.0;
+            }
+            else
+            {
+                var lastRect = GetSlotRect(_dragSoloGroupLastItemIdx);
+                double edge = horizontal ? lastRect.Right : lastRect.Bottom;
+                double draggedLeading = horizontal ? draggedRect.Left : draggedRect.Top;
+                return draggedLeading - edge <= buttonWidth / 2.0;
+            }
+        }
+
         #endregion
 
         #region Live drag reorder
@@ -565,6 +699,27 @@ namespace RetroBar.Controls
         // Index of the primary button within _dragGroupSorted.
         private int _dragGroupPrimaryOffset;
 
+        // Ctrl+drag: move only the pressed button, leaving its groupmates in place, so it can be
+        // reordered within the group or pulled out of it entirely.
+        private bool _dragIsSolo;
+        // The group the solo-dragged button belonged to when the drag started (null if ungrouped).
+        private TaskGroup _dragSoloOriginalGroup;
+        // Block-list index range (inclusive) occupied by _dragSoloOriginalGroup's remaining
+        // members; -1 if there is no such group. Used to detect the dragged button crossing out
+        // of its own group's span.
+        private int _dragSoloGroupBlockFirst = -1;
+        private int _dragSoloGroupBlockLast = -1;
+        // Original container indices (into _dragContainers/_dragSlots) of the first and last
+        // remaining members of _dragSoloOriginalGroup, in visual order; -1 if no such group.
+        private int _dragSoloGroupFirstItemIdx = -1;
+        private int _dragSoloGroupLastItemIdx = -1;
+        // Whether the solo-dragged button currently counts as still belonging to its original
+        // group. Leaving fires once the dragged button, sitting right at the group's edge, has
+        // moved half its own width past that edge; re-entering requires the same dwell-to-confirm
+        // hover gesture as an ordinary group merge, restricted to only that original group - this
+        // asymmetry is the intended hysteresis between leaving and rejoining.
+        private bool _dragSoloInGroup;
+
         // The non-moving buttons, partitioned into "blocks": a run of members belonging to the
         // same foreign task group is one indivisible block, everything else is its own singleton
         // block. Swaps are evaluated a whole block at a time so a multi-button group is treated
@@ -580,7 +735,7 @@ namespace RetroBar.Controls
 
         public bool IsDraggingButton => _isDragging;
 
-        public void StartButtonDrag(TaskButton button, MouseEventArgs e)
+        public void StartButtonDrag(TaskButton button, MouseEventArgs e, bool soloDrag = false)
         {
             if (_isDragging || button == null || TasksList.Items.Count < 2)
                 return;
@@ -631,7 +786,11 @@ namespace RetroBar.Controls
 
             var draggedWindow = _dragContainer.DataContext as ApplicationWindow;
             var draggedGroup = draggedWindow != null ? _groupManager.GetGroupForWindow(draggedWindow) : null;
-            if (draggedGroup != null && draggedGroup.Windows.Count > 1)
+
+            _dragIsSolo = soloDrag;
+            _dragSoloOriginalGroup = soloDrag ? draggedGroup : null;
+
+            if (!soloDrag && draggedGroup != null && draggedGroup.Windows.Count > 1)
             {
                 for (int i = 0; i < _dragContainers.Count; i++)
                 {
@@ -665,6 +824,8 @@ namespace RetroBar.Controls
 
             var blocks = new List<List<int>>();
             TaskGroup currentGroup = null;
+            var soloGroupBlockIndices = new List<int>();
+            var soloGroupItemIndices = new List<int>();
 
             for (int i = 0; i < _dragContainers.Count; i++)
             {
@@ -673,16 +834,31 @@ namespace RetroBar.Controls
                 var window = _dragContainers[i].DataContext as ApplicationWindow;
                 var group = window != null ? _groupManager.GetGroupForWindow(window) : null;
 
-                if (group != null && ReferenceEquals(group, currentGroup))
+                // The solo-dragged button's own former group is left splittable, so the drag can
+                // land between its former groupmates (reorder within the group) or past either end
+                // (leave the group), rather than being blocked from entering its own old group.
+                bool splittable = _dragSoloOriginalGroup != null && ReferenceEquals(group, _dragSoloOriginalGroup);
+
+                if (!splittable && group != null && ReferenceEquals(group, currentGroup))
                 {
                     blocks[blocks.Count - 1].Add(i);
                 }
                 else
                 {
                     blocks.Add(new List<int> { i });
-                    currentGroup = group;
+                    currentGroup = splittable ? null : group;
+                    if (splittable)
+                    {
+                        soloGroupBlockIndices.Add(blocks.Count - 1);
+                        soloGroupItemIndices.Add(i);
+                    }
                 }
             }
+
+            _dragSoloGroupBlockFirst = soloGroupBlockIndices.Count > 0 ? soloGroupBlockIndices[0] : -1;
+            _dragSoloGroupBlockLast = soloGroupBlockIndices.Count > 0 ? soloGroupBlockIndices[soloGroupBlockIndices.Count - 1] : -1;
+            _dragSoloGroupFirstItemIdx = soloGroupItemIndices.Count > 0 ? soloGroupItemIndices[0] : -1;
+            _dragSoloGroupLastItemIdx = soloGroupItemIndices.Count > 0 ? soloGroupItemIndices[soloGroupItemIndices.Count - 1] : -1;
 
             _dragBlockStartPos = new List<int>(blocks.Count + 1) { 0 };
             int pos = 0;
@@ -706,6 +882,9 @@ namespace RetroBar.Controls
                 while (gap < _dragBlockStartPos.Count - 1 && _dragBlockStartPos[gap] < initialPos) gap++;
             }
             _dragBlockGap = gap;
+
+            _dragSoloInGroup = _dragSoloOriginalGroup != null
+                && gap >= _dragSoloGroupBlockFirst && gap <= _dragSoloGroupBlockLast + 1;
         }
 
 
@@ -819,8 +998,53 @@ namespace RetroBar.Controls
                 LayoutDragSiblings(horizontal);
             }
 
-            // Group hover detection: only when dragging a single ungrouped button.
-            if (_dragGroupMemberIndices.Count == 0)
+            // Leaving the original group: while nested between two former groupmates it's
+            // unambiguously still in; once it's swapped a full block past the group it's
+            // unambiguously out. Right at the group's edge (touching it, nothing between) is the
+            // ambiguous case - only counts as "left" once it's dragged half its own width past that
+            // edge. Checked every move (not just on gap change) since distance keeps growing as the
+            // cursor keeps moving even once the gap itself stops changing. Re-entering is
+            // deliberately harder - see the rejoin-hover handling below.
+            if (_dragIsSolo && _dragSoloOriginalGroup != null && _dragSoloInGroup
+                && !IsSoloStillWithinGroup(gap, delta, horizontal))
+            {
+                _dragSoloInGroup = false;
+                _groupManager.SetSoloDragVisual(_dragContainer, _dragSoloOriginalGroup, false);
+                CancelGroupHover();
+            }
+
+            if (_dragIsSolo)
+            {
+                // Solo drag: never invite a merge into a different group. The only hover-confirm
+                // gesture allowed is rejoining this button's own original group once it's left it.
+                if (_dragSoloOriginalGroup != null && !_dragSoloInGroup)
+                {
+                    var draggedRect = GetDraggedRect(delta, horizontal);
+                    int overlapIdx = -1;
+
+                    for (int i = 0; i < _dragContainers.Count; i++)
+                    {
+                        if (i == _dragFromIndex) continue;
+                        if (_dragContainers[i].DataContext is not ApplicationWindow w || !_dragSoloOriginalGroup.Windows.Contains(w))
+                            continue;
+                        if (OverlapFraction(draggedRect, GetSlotRect(i), horizontal) >= 0.25f)
+                        {
+                            overlapIdx = i;
+                            break;
+                        }
+                    }
+
+                    if (overlapIdx != _groupManager.HoverTargetIndex)
+                    {
+                        CancelGroupHover();
+                        if (overlapIdx >= 0)
+                            StartSoloRejoinHover(overlapIdx);
+                    }
+                }
+            }
+            // Group hover detection (merge into a new/different group): only when dragging a
+            // single ungrouped button.
+            else if (_dragGroupMemberIndices.Count == 0)
             {
                 var draggedRect = GetDraggedRect(delta, horizontal);
                 int overlapIdx = -1;
@@ -856,7 +1080,10 @@ namespace RetroBar.Controls
 
             // Commit or cancel provisional group before starting snap animation.
             if (_groupManager.HoverConfirmed)
+            {
                 _groupManager.CommitProvisionalGroup();
+                taskbarItems?.Refresh();
+            }
             else
                 CancelGroupHover();
 
@@ -974,7 +1201,8 @@ namespace RetroBar.Controls
             int to = _dragToIndex;
             bool horizontal = Host?.Orientation != Orientation.Vertical;
 
-            if (taskbarItems?.SourceCollection is ObservableCollection<ApplicationWindow> source)
+            var source = taskbarItems?.SourceCollection as ObservableCollection<ApplicationWindow>;
+            if (source != null)
             {
                 if (_dragGroupSorted.Count > 0)
                 {
@@ -1042,6 +1270,17 @@ namespace RetroBar.Controls
                 }
             }
 
+            // Ctrl+drag of a single button out of/within its group: commit whatever in/out-of-group
+            // state was last shown live during the drag. Skipped if a hover-merge already moved it
+            // into a different group (that path resolves membership itself).
+            if (_dragIsSolo && _dragSoloOriginalGroup != null
+                && _dragContainer.DataContext is ApplicationWindow soloWindow
+                && ReferenceEquals(_groupManager.GetGroupForWindow(soloWindow), _dragSoloOriginalGroup))
+            {
+                _groupManager.ResolveSoloGroupDrag(soloWindow, _dragSoloOriginalGroup, _dragSoloInGroup);
+                taskbarItems?.Refresh();
+            }
+
             // Clear all transforms; the new layout already reflects the committed order so this
             // happens in the same render pass as the collection move (no flicker).
             foreach (var cp in _dragContainers)
@@ -1067,6 +1306,13 @@ namespace RetroBar.Controls
             _dragGroupPrimaryOffset = 0;
             _dragBlockStartPos = new List<int>();
             _dragBlockGap = 0;
+            _dragIsSolo = false;
+            _dragSoloOriginalGroup = null;
+            _dragSoloGroupBlockFirst = -1;
+            _dragSoloGroupBlockLast = -1;
+            _dragSoloGroupFirstItemIdx = -1;
+            _dragSoloGroupLastItemIdx = -1;
+            _dragSoloInGroup = false;
 
             // Reapply group visuals after layout settles (collection moves may recycle containers).
             Dispatcher.BeginInvoke(DispatcherPriority.Loaded, (Action)_groupManager.ApplyGroupVisuals);
