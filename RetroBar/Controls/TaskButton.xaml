@@ -96,6 +96,10 @@
                           Click="RemoveGroupMenuItem_OnClick"
                           Name="RemoveGroupMenuItem"
                           Visibility="Collapsed" />
+                <MenuItem Header="{DynamicResource tile_group}"
+                          Click="TileGroupMenuItem_OnClick"
+                          Name="TileGroupMenuItem"
+                          Visibility="Collapsed" />
                 <MenuItem Header="{DynamicResource group_new_color}"
                           Click="GroupNewColorMenuItem_OnClick"
                           Name="GroupNewColorMenuItem"

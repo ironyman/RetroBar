@@ -142,6 +142,7 @@
     <s:String x:Key="maximize">Ma_ximize</s:String>
     <s:String x:Key="remove_from_group">_Remove from group</s:String>
     <s:String x:Key="remove_group">Remove _group</s:String>
+    <s:String x:Key="tile_group">_Tile group</s:String>
     <s:String x:Key="group_new_color">New _color</s:String>
     <s:String x:Key="collapse_group">_Collapse group</s:String>
     <s:String x:Key="collapse_all">Collapse _all</s:String>

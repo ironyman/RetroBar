@@ -124,6 +124,7 @@ namespace RetroBar.Controls
             var vis = color.HasValue ? Visibility.Visible : Visibility.Collapsed;
             RemoveFromGroupMenuItem.Visibility = vis;
             RemoveGroupMenuItem.Visibility = vis;
+            TileGroupMenuItem.Visibility = vis;
             GroupNewColorMenuItem.Visibility = vis;
             CollapseGroupMenuItem.Visibility = vis;
             CollapseAllMenuItem.Visibility = vis;
@@ -182,6 +183,14 @@ namespace RetroBar.Controls
             if (Window == null)
             {
                 return;
+            }
+
+            if (TileGroupMenuItem.Visibility == Visibility.Visible)
+            {
+                // Windows' keyboard-driven snap only goes down to quarters, so tiling tops out at
+                // groups of 4.
+                int groupSize = Host?.GetGroupWindows(Window)?.Count ?? 0;
+                TileGroupMenuItem.Visibility = groupSize <= 4 ? Visibility.Visible : Visibility.Collapsed;
             }
 
             NativeMethods.WindowShowStyle wss = Window.ShowStyle;
@@ -309,6 +318,11 @@ namespace RetroBar.Controls
         private void RemoveGroupMenuItem_OnClick(object sender, RoutedEventArgs e)
         {
             Host?.RemoveGroup(Window);
+        }
+
+        private void TileGroupMenuItem_OnClick(object sender, RoutedEventArgs e)
+        {
+            Host?.TileGroup(Window);
         }
 
         private void GroupNewColorMenuItem_OnClick(object sender, RoutedEventArgs e)

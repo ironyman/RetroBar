@@ -550,6 +550,13 @@ namespace RetroBar.Controls
         // Returns the windows belonging to the same group as the given window.
         public List<ApplicationWindow> GetGroupWindows(ApplicationWindow window) => _groupManager.GetGroupWindows(window);
 
+        // Called from TaskButton right-click -> Tile group.
+        public void TileGroup(ApplicationWindow window)
+        {
+            var windows = _groupManager.GetGroupWindowsOrdered(window, taskbarItems?.SourceCollection as ObservableCollection<ApplicationWindow>);
+            _ = WindowTiler.TileGroupAsync(windows);
+        }
+
         // Collapses the group containing the given window.
         public void CollapseGroup(ApplicationWindow window)
         {

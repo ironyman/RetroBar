@@ -181,6 +181,21 @@ namespace RetroBar.Controls
             return new List<ApplicationWindow>(group.Windows);
         }
 
+        // Same as GetGroupWindows, but ordered by each window's position in the taskbar so
+        // callers (e.g. tiling) can assign positions left-to-right consistently.
+        public List<ApplicationWindow> GetGroupWindowsOrdered(ApplicationWindow window, ObservableCollection<ApplicationWindow> source)
+        {
+            var group = GetGroupForWindow(window);
+            if (group == null) return new List<ApplicationWindow> { window };
+            if (source == null) return new List<ApplicationWindow>(group.Windows);
+
+            return group.Windows
+                .Select(w => (window: w, index: source.IndexOf(w)))
+                .OrderBy(x => x.index)
+                .Select(x => x.window)
+                .ToList();
+        }
+
         public void CollapseGroup(ApplicationWindow window)
         {
             if (window == null) return;
