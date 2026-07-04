@@ -126,26 +126,37 @@ namespace RetroBar.Controls
                         int firstGroupIdx = groupPositions[0];
                         int lastGroupIdx = groupPositions[groupPositions.Count - 1];
 
-                        // Place before or after the group based on which end is closer.
-                        bool placeBeforeGroup = Math.Abs(windowPos - firstGroupIdx) <= Math.Abs(windowPos - lastGroupIdx);
+                        // Already touching the group on one side (e.g. the group shrank to a
+                        // single member sitting right next to this window) - leave it where it
+                        // is. Without this, a lone remaining member makes firstGroupIdx equal
+                        // lastGroupIdx, so the "closer end" distances below always tie and the
+                        // tie-break would otherwise yank an already-adjacent window to the other
+                        // side, swapping the two buttons for no reason.
+                        bool alreadyAdjacent = windowPos == firstGroupIdx - 1 || windowPos == lastGroupIdx + 1;
 
-                        int targetPos;
-                        if (placeBeforeGroup)
+                        if (!alreadyAdjacent)
                         {
-                            // Insert before the first group member.
-                            // After removing windowPos, firstGroupIdx shifts down if windowPos < it.
-                            targetPos = windowPos < firstGroupIdx ? firstGroupIdx - 1 : firstGroupIdx;
-                        }
-                        else
-                        {
-                            // Insert after the last group member.
-                            // After removing windowPos, lastGroupIdx shifts down if windowPos < it.
-                            targetPos = windowPos < lastGroupIdx ? lastGroupIdx : lastGroupIdx + 1;
-                        }
+                            // Place before or after the group based on which end is closer.
+                            bool placeBeforeGroup = Math.Abs(windowPos - firstGroupIdx) <= Math.Abs(windowPos - lastGroupIdx);
 
-                        targetPos = Math.Max(0, Math.Min(targetPos, source.Count - 1));
-                        if (targetPos != windowPos)
-                            source.Move(windowPos, targetPos);
+                            int targetPos;
+                            if (placeBeforeGroup)
+                            {
+                                // Insert before the first group member.
+                                // After removing windowPos, firstGroupIdx shifts down if windowPos < it.
+                                targetPos = windowPos < firstGroupIdx ? firstGroupIdx - 1 : firstGroupIdx;
+                            }
+                            else
+                            {
+                                // Insert after the last group member.
+                                // After removing windowPos, lastGroupIdx shifts down if windowPos < it.
+                                targetPos = windowPos < lastGroupIdx ? lastGroupIdx : lastGroupIdx + 1;
+                            }
+
+                            targetPos = Math.Max(0, Math.Min(targetPos, source.Count - 1));
+                            if (targetPos != windowPos)
+                                source.Move(windowPos, targetPos);
+                        }
                     }
                 }
             }
