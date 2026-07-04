@@ -597,6 +597,9 @@ namespace RetroBar.Controls
 
                 if (genuinelyGone.Count > 0)
                 {
+                    bool anyWasGrouped = genuinelyGone.Any(w => _groupManager.GetGroupForWindow(w) != null);
+                    if (anyWasGrouped)
+                        ShellLogger.Debug($"TaskList: window(s) closed while grouped: {string.Join(", ", genuinelyGone.Select(w => w.Title))}, isDragging={_isDragging} tick={Environment.TickCount}");
                     changed = _groupManager.RemoveWindows(genuinelyGone);
                 }
 
@@ -1195,11 +1198,17 @@ namespace RetroBar.Controls
         public void StartButtonDrag(TaskButton button, MouseEventArgs e, bool soloDrag = false)
         {
             if (_isDragging || button == null || TasksList.Items.Count < 2)
+            {
+                ShellLogger.Debug($"TaskList: StartButtonDrag bailed early - isDragging={_isDragging} buttonNull={button == null} itemCount={TasksList.Items.Count} tick={Environment.TickCount}");
                 return;
+            }
 
             _dragPanel = FindItemsPanel<WrapPanel>(TasksList);
             if (_dragPanel == null)
+            {
+                ShellLogger.Debug($"TaskList: StartButtonDrag bailed - no WrapPanel found tick={Environment.TickCount}");
                 return;
+            }
 
             // Snapshot the current containers and their stable (untransformed) layout slots.
             _dragContainers = new List<ContentPresenter>();
@@ -1210,7 +1219,10 @@ namespace RetroBar.Controls
             for (int i = 0; i < TasksList.Items.Count; i++)
             {
                 if (TasksList.ItemContainerGenerator.ContainerFromIndex(i) is not ContentPresenter cp)
+                {
+                    ShellLogger.Debug($"TaskList: StartButtonDrag bailed - container for index {i} of {TasksList.Items.Count} not generated (GeneratorStatus={TasksList.ItemContainerGenerator.Status}) tick={Environment.TickCount}");
                     return;
+                }
 
                 cp.RenderTransform = null;
                 _dragContainers.Add(cp);
@@ -1222,8 +1234,12 @@ namespace RetroBar.Controls
             }
 
             if (_dragFromIndex < 0)
+            {
+                ShellLogger.Debug($"TaskList: StartButtonDrag bailed - dragged button's DataContext not found among {TasksList.Items.Count} containers tick={Environment.TickCount}");
                 return;
+            }
 
+            ShellLogger.Debug($"TaskList: StartButtonDrag starting, fromIndex={_dragFromIndex}, soloDrag={soloDrag}, itemCount={TasksList.Items.Count} tick={Environment.TickCount}");
             _isDragging = true;
             _dragContainer = _dragContainers[_dragFromIndex];
             _dragToIndex = _dragFromIndex;
@@ -1544,6 +1560,8 @@ namespace RetroBar.Controls
             if (!_isDragging)
                 return;
 
+            ShellLogger.Debug($"TaskList: EndButtonDrag fromIndex={_dragFromIndex} toIndex={_dragToIndex} groupSize={_dragGroupSorted.Count} hoverConfirmed={_groupManager.HoverConfirmed} tick={Environment.TickCount}");
+
             // Stop tracking the cursor immediately so a stray mouse move during the settle
             // animation can't restart UpdateButtonDrag and cancel the snap (leaving it stuck).
             _isDragging = false;
@@ -1671,6 +1689,27 @@ namespace RetroBar.Controls
             if (_dragContainers == null)
                 return;
 
+            ShellLogger.Debug($"TaskList: CommitDrag start fromIndex={_dragFromIndex} toIndex={_dragToIndex} groupSize={_dragGroupSorted.Count} containerCount={_dragContainers.Count} tick={Environment.TickCount}");
+
+            try
+            {
+                CommitDragCore();
+            }
+            catch (Exception ex)
+            {
+                // Swallowing here (rather than letting this escape the animation-Completed callback)
+                // is deliberate: an exception here previously meant the cleanup below - which resets
+                // _isDragging and all drag bookkeeping fields - never ran, silently leaving every
+                // future drag attempt looking like a no-op (StartButtonDrag's _isDragging guard never
+                // clears). Log it so the real cause is visible, but always fall through to cleanup.
+                ShellLogger.Error($"TaskList: CommitDrag threw - drag state would have been left stuck without this catch. fromIndex={_dragFromIndex} toIndex={_dragToIndex} groupSize={_dragGroupSorted.Count} containerCount={_dragContainers?.Count}", ex);
+            }
+
+            CommitDragCleanup();
+        }
+
+        private void CommitDragCore()
+        {
             int from = _dragFromIndex;
             int to = _dragToIndex;
             bool horizontal = Host?.Orientation != Orientation.Vertical;
@@ -1705,6 +1744,15 @@ namespace RetroBar.Controls
                     for (int i = 0; i < desired.Count; i++)
                     {
                         int cur = source.IndexOf(desired[i]);
+                        if (cur < 0)
+                        {
+                            // The window was removed from the source (e.g. its owning process
+                            // closed it) during the drag-snap animation window, between mouse-up
+                            // and this reorder actually committing. It's already gone; nothing to
+                            // move.
+                            ShellLogger.Debug($"TaskList: CommitDrag - window at desired[{i}] no longer in source collection, skipping move");
+                            continue;
+                        }
                         if (cur != i) source.Move(cur, i);
                     }
                 }
@@ -1789,7 +1837,13 @@ namespace RetroBar.Controls
                 _groupManager.ResolveSoloGroupDrag(soloWindow, _dragSoloOriginalGroup, _dragSoloInGroup);
                 taskbarItems?.Refresh();
             }
+        }
 
+        // Always runs after CommitDragCore, even if it threw, so a failure in the reorder logic
+        // (e.g. a grouped window closing mid-drag-snap) can never leave _isDragging stuck true and
+        // every future drag attempt silently doing nothing.
+        private void CommitDragCleanup()
+        {
             // Clear all transforms; the new layout already reflects the committed order so this
             // happens in the same render pass as the collection move (no flicker).
             foreach (var cp in _dragContainers)
