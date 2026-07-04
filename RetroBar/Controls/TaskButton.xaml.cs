@@ -156,7 +156,7 @@ namespace RetroBar.Controls
             {
                 From = ActualWidth,
                 To = 0,
-                Duration = new Duration(TimeSpan.FromMilliseconds(180)),
+                Duration = new Duration(TimeSpan.FromMilliseconds(250)),
                 FillBehavior = FillBehavior.HoldEnd,
                 EasingFunction = ease
             };

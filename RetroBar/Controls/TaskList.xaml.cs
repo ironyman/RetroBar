@@ -499,6 +499,10 @@ namespace RetroBar.Controls
                     // Re-check: a same-group focus swap's matching activate call may have already
                     // landed, in which case the group never actually lost its last active window.
                     if (_groupManager.GroupHasActiveWindow(group)) return;
+
+                    // Start the remaining buttons growing into the post-collapse width right away
+                    // so it plays alongside the slide-out instead of snapping in after it finishes.
+                    SetTaskButtonWidth(animate: true, excludeCount: others.Count);
                     AnimateHide(others, () => taskbarItems?.Refresh());
                 }));
             }
@@ -671,7 +675,10 @@ namespace RetroBar.Controls
             SetTaskButtonWidth();
         }
 
-        private void SetTaskButtonWidth(bool animate = false)
+        // excludeCount lets a caller compute the width buttons will settle at once some windows
+        // it's about to hide are actually removed, so the remaining buttons' grow animation can
+        // start immediately alongside the hide's slide-out instead of waiting for it to finish.
+        private void SetTaskButtonWidth(bool animate = false, int excludeCount = 0)
         {
             if (Host is null)
                 return; // The state is trashed, but presumably it's just a transition
@@ -1009,6 +1016,13 @@ namespace RetroBar.Controls
                     var representative = _groupManager.GetCollapsedRepresentative(group, source);
                     toHide.AddRange(group.Windows.Where(w => !ReferenceEquals(w, representative)));
                 }
+            }
+
+            // Start the remaining buttons growing into the post-collapse width right away so it
+            // plays alongside the slide-out instead of snapping in after it finishes.
+            if (toHide.Count > 0)
+            {
+                SetTaskButtonWidth(animate: true, excludeCount: toHide.Count);
             }
 
             AnimateHide(toHide, onComplete);
