@@ -12,6 +12,7 @@
         PreviewMouseDown="Taskbar_OnPreviewMouseDown"
         MouseLeftButtonDown="Taskbar_OnMouseLeftButtonDown"
         MouseMove="Taskbar_MouseMove"
+        ContextMenuOpening="Taskbar_OnContextMenuOpening"
         Deactivated="Taskbar_Deactivated"
         IsKeyboardFocusWithinChanged="Taskbar_IsKeyboardFocusWithinChanged"
         AllowDrop="True"

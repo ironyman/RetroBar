@@ -9,6 +9,7 @@ using System;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -114,6 +115,32 @@ namespace RetroBar
 
             _startMenuMonitor.StartMenuVisibilityChanged += StartMenuMonitor_StartMenuVisibilityChanged;
             _shellManager.TasksService.WindowActivated += TasksService_WindowActivated;
+        }
+
+        [DllImport("user32.dll")] private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+        [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
+
+        // Mirrors TaskButton.ForceForeground / NotifyIconList.ForceForeground: a plain SetForegroundWindow
+        // is often silently denied by Windows' foreground-lock rules, and calling it from a ContextMenu's
+        // Opened handler is too late anyway - the popup HWND is already created and z-ordered by then, so
+        // a foreground change landing afterward can't pull it back above us. AttachThreadInput temporarily
+        // joins our thread's input queue to the current foreground window's thread, which grants
+        // SetForegroundWindow permission much more reliably; doing this in ContextMenuOpening (before the
+        // popup exists) instead of Opened avoids the ordering race.
+        private static void ForceForeground(IntPtr hwnd)
+        {
+            IntPtr fg = NativeMethods.GetForegroundWindow();
+            if (fg == hwnd) return;
+            uint fgTid = NativeMethods.GetWindowThreadProcessId(fg, out _);
+            uint myTid = GetCurrentThreadId();
+            bool attached = fgTid != 0 && fgTid != myTid && AttachThreadInput(fgTid, myTid, true);
+            NativeMethods.SetForegroundWindow(hwnd);
+            if (attached) AttachThreadInput(fgTid, myTid, false);
+        }
+
+        private void Taskbar_OnContextMenuOpening(object sender, ContextMenuEventArgs e)
+        {
+            if (Handle != IntPtr.Zero) ForceForeground(Handle);
         }
 
         private void OnPreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
@@ -667,11 +694,8 @@ namespace RetroBar
             SetBtopMenuItemVisibility(menu);
             _openTrayContextMenu = menu;
 
-            // Force ourselves to the foreground so clicking any other window (including an already-
-            // foreground elevated window) becomes a real foreground change that the FG hook can catch.
-            // Without this the menu can stay open forever when clicking into an elevated app, because
-            // the mouse hook is UIPI-blocked and no foreground *change* occurs. See ContextMenu_Opened.
-            if (Handle != IntPtr.Zero) NativeMethods.SetForegroundWindow(Handle);
+            // Foreground is already forced in Taskbar_OnContextMenuOpening (before this popup was
+            // created); see ForceForeground for why that matters for clicking into elevated windows.
 
             _trayContextMenuHook = new LowLevelMouseHook();
             _trayContextMenuHook.LowLevelMouseEvent += OnTrayContextMenuMouseEvent;
@@ -741,12 +765,8 @@ namespace RetroBar
                 SetGatherAllWindowsEnabled(menu);
                 _openTrayContextMenu = menu;
 
-                // Force ourselves to the foreground so clicking any other window (including an already-
-                // foreground elevated window) becomes a real foreground change that the FG hook can
-                // catch. The taskbar is WS_EX_NOACTIVATE, so opening the menu otherwise leaves the
-                // previously-foreground (possibly elevated) window as foreground; clicking back into it
-                // would produce no foreground change and the UIPI-blocked mouse hook never sees it.
-                if (Handle != IntPtr.Zero) NativeMethods.SetForegroundWindow(Handle);
+                // Foreground is already forced in Taskbar_OnContextMenuOpening (before this popup was
+                // created); see ForceForeground for why that matters for clicking into elevated windows.
 
                 _trayContextMenuHook = new LowLevelMouseHook();
                 _trayContextMenuHook.LowLevelMouseEvent += OnTrayContextMenuMouseEvent;
