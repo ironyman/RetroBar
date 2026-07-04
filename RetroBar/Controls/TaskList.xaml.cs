@@ -1244,10 +1244,14 @@ namespace RetroBar.Controls
             var draggedWindow = _dragContainer.DataContext as ApplicationWindow;
             var draggedGroup = draggedWindow != null ? _groupManager.GetGroupForWindow(draggedWindow) : null;
 
-            // A collapsed group shows only its representative button; there is no meaningful "pull
-            // one button out" gesture while the rest are hidden, so ignore ctrl and drag the whole
-            // group as a block (the collapsed-group handling in CommitDrag keeps its members together).
-            if (soloDrag && draggedGroup != null && draggedGroup.IsCollapsed && draggedGroup.Windows.Count > 1)
+            // A collapsed group normally shows only its representative button; there is no
+            // meaningful "pull one button out" gesture while the rest are hidden, so ignore ctrl
+            // and drag the whole group as a block (the collapsed-group handling in CommitDrag keeps
+            // its members together). But an active window forces the group to render fully expanded
+            // (see Tasks_Filter) - in that case every member is its own visible button, same as an
+            // uncollapsed group, so solo drag is meaningful and must not be suppressed.
+            if (soloDrag && draggedGroup != null && draggedGroup.IsCollapsed && draggedGroup.Windows.Count > 1
+                && !_groupManager.GroupHasActiveWindow(draggedGroup))
                 soloDrag = false;
 
             _dragOriginalGroup = draggedGroup;
