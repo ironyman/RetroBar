@@ -361,7 +361,13 @@ namespace RetroBar.Controls
             // Pick the color from whichever side already has a group; otherwise random.
             Color color = (targetGroup ?? draggedGroup)?.GroupColor ?? TaskGroup.RandomColor();
 
-            _provisionalGroup = new TaskGroup(color);
+            _provisionalGroup = new TaskGroup(color)
+            {
+                // If either side being merged was collapsed, keep the merged group collapsed -
+                // otherwise dragging a new window onto a collapsed group would silently
+                // uncollapse it.
+                IsCollapsed = (draggedGroup?.IsCollapsed ?? false) || (targetGroup?.IsCollapsed ?? false)
+            };
 
             // Merge both sides into the provisional display set.
             if (draggedGroup != null)
