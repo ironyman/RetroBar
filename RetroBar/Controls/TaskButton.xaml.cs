@@ -133,7 +133,7 @@ namespace RetroBar.Controls
             // A reveal caused by expanding/uncollapsing a group or removing a window from a
             // collapsed group always slides in, regardless of the general new-window setting -
             // but a width slide only reads correctly on a horizontal taskbar either way.
-            bool forceSlideIn = Host?.ConsumeRevealAnimation(Window) == true;
+            bool forceSlideIn = Host?.ConsumeRevealAnimation(Window) == true && Settings.Instance.AnimateTaskbarLayout;
 
             if (Host?.Host?.Orientation == Orientation.Horizontal && (forceSlideIn || Settings.Instance.SlideTaskbarButtons))
             {

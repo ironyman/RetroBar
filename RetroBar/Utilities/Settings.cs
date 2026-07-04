@@ -389,6 +389,13 @@ namespace RetroBar.Utilities
             set => Set(ref _slideTaskbarButtons, value);
         }
 
+        private bool _animateTaskbarLayout = true;
+        public bool AnimateTaskbarLayout
+        {
+            get => _animateTaskbarLayout;
+            set => Set(ref _animateTaskbarLayout, value);
+        }
+
         private bool _groupAfterParent = true;
         public bool GroupAfterParent
         {

@@ -691,7 +691,7 @@ namespace RetroBar.Controls
             double oldWidth = ButtonWidth; // reads the eased value if an animation is in flight
             _targetButtonWidth = newWidth;
 
-            if (!animate || oldWidth <= 0 || Math.Abs(newWidth - oldWidth) < 0.5)
+            if (!animate || !Settings.Instance.AnimateTaskbarLayout || oldWidth <= 0 || Math.Abs(newWidth - oldWidth) < 0.5)
             {
                 BeginAnimation(ButtonWidthProperty, null);
                 ButtonWidth = newWidth;
@@ -854,7 +854,7 @@ namespace RetroBar.Controls
         // up each window's current container rather than reusing the ones captured earlier.
         private void AnimateLayoutChanges(Dictionary<ApplicationWindow, Point> oldPositions)
         {
-            if (oldPositions.Count == 0) return;
+            if (oldPositions.Count == 0 || !Settings.Instance.AnimateTaskbarLayout) return;
 
             Dispatcher.BeginInvoke(DispatcherPriority.Loaded, (Action)(() =>
             {
@@ -975,7 +975,7 @@ namespace RetroBar.Controls
         // vertical, where a width slide wouldn't read as a slide).
         private void AnimateHide(IEnumerable<ApplicationWindow> windows, Action onComplete)
         {
-            bool horizontal = Host?.Orientation != Orientation.Vertical;
+            bool horizontal = Settings.Instance.AnimateTaskbarLayout && Host?.Orientation != Orientation.Vertical;
             var buttons = new List<TaskButton>();
 
             if (horizontal)
