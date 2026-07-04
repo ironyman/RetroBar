@@ -615,6 +615,7 @@ namespace RetroBar.Controls
             bool droppedOutside = taskbar != null && IsOutsideTaskbarWindow(taskbar);
 
             Vector finalOffset = _iconDragSlots[_iconDragToIndex] - _iconDragSlots[_iconDragFromIndex];
+            ShellLogger.Debug($"[DragEnd] from={_iconDragFromIndex} to={_iconDragToIndex} outside={droppedOutside} snapOffset={finalOffset} draggedId={(_iconBeingDragged?.GetStableIdentifier() ?? "null")}");
             var transform = GetIconTranslate(_iconDragContainer);
             transform.BeginAnimation(TranslateTransform.XProperty, null);
             transform.BeginAnimation(TranslateTransform.YProperty, null);
@@ -732,30 +733,68 @@ namespace RetroBar.Controls
                 var pinnedOrder = new List<string>(Settings.Instance.NotifyIconOrderPinned);
                 var targetList = isNowOnPinnedSide ? pinnedOrder : hideOrder;
 
-                ShellLogger.Debug($"[DragCommit] side={(isNowOnPinnedSide ? "pinned" : "hide")} hideOrder=[{string.Join(",",hideOrder)}] pinnedOrder=[{string.Join(",",pinnedOrder)}]");
-                ShellLogger.Debug($"[DragCommit] order=[{string.Join(",",order)}] sepNewVis={sepNewVisualPos}");
+                ShellLogger.Debug($"[DragCommit] side={(isNowOnPinnedSide ? "pinned" : "hide")} wasPinned={wasOnPinnedSide} to={to} sepNewVis={sepNewVisualPos} sepContainerIdx={sepContainerIdx}");
+                ShellLogger.Debug($"[DragCommit] visualOrder:");
+                for (int pos = 0; pos < order.Count; pos++)
+                {
+                    var dc = _iconDragContainers[order[pos]].DataContext;
+                    string id = dc is TrayIcon ti ? ti.GetStableIdentifier() : dc?.GetType().Name ?? "null";
+                    string side = pos < sepNewVisualPos ? "H" : pos > sepNewVisualPos ? "P" : "SEP";
+                    string marker = order[pos] == from ? " <--DRAGGED" : "";
+                    ShellLogger.Debug($"  pos={pos} containerIdx={order[pos]} id={id} side={side}{marker}");
+                }
+                ShellLogger.Debug($"[DragCommit] hideOrder=[{string.Join(",",hideOrder)}] pinnedOrder=[{string.Join(",",pinnedOrder)}]");
 
-                // Find the first icon after the drop point that already belongs to the target list;
-                // insert before it so the drop position is honoured within that list.
+                // Find the nearest icon in the target list around the drop point.
+                // First scan right (forward) for the first match; if none found,
+                // scan left (backward) for the last match so we insert close to
+                // where the user actually dropped.
                 TrayIcon neighbor = null;
+                bool neighborAfter = false; // true = insert before neighbor; false = insert after
                 for (int pos = to + 1; pos < order.Count; pos++)
                 {
-                    if (_iconDragContainers[order[pos]].DataContext is TrayIcon ni &&
-                        targetList.Contains(ni.GetStableIdentifier()))
-                    { neighbor = ni; break; }
+                    if (_iconDragContainers[order[pos]].DataContext is TrayIcon ni)
+                    {
+                        string nid = ni.GetStableIdentifier();
+                        bool inTarget = targetList.Contains(nid);
+                        ShellLogger.Debug($"[DragCommit] neighbor-fwd pos={pos} id={nid} inTarget={inTarget}");
+                        if (inTarget) { neighbor = ni; neighborAfter = true; break; }
+                    }
+                }
+                if (neighbor == null)
+                {
+                    for (int pos = to - 1; pos >= 0; pos--)
+                    {
+                        if (_iconDragContainers[order[pos]].DataContext is TrayIcon ni)
+                        {
+                            string nid = ni.GetStableIdentifier();
+                            bool inTarget = targetList.Contains(nid);
+                            ShellLogger.Debug($"[DragCommit] neighbor-back pos={pos} id={nid} inTarget={inTarget}");
+                            if (inTarget) { neighbor = ni; neighborAfter = false; break; }
+                        }
+                    }
                 }
 
-                ShellLogger.Debug($"[DragCommit] neighbor={(neighbor?.GetStableIdentifier() ?? "null")}");
+                ShellLogger.Debug($"[DragCommit] neighbor={(neighbor?.GetStableIdentifier() ?? "null")} after={neighborAfter} targetList={(isNowOnPinnedSide ? "pinned" : "hide")}");
 
                 // Remove from whichever list currently holds the icon, then insert into target.
                 hideOrder.Remove(draggedId);
                 pinnedOrder.Remove(draggedId);
 
+                int insertIdx;
                 if (neighbor != null)
-                    targetList.Insert(targetList.IndexOf(neighbor.GetStableIdentifier()), draggedId);
+                {
+                    insertIdx = targetList.IndexOf(neighbor.GetStableIdentifier());
+                    if (!neighborAfter) insertIdx++;
+                    targetList.Insert(insertIdx, draggedId);
+                }
                 else
+                {
+                    insertIdx = targetList.Count;
                     targetList.Add(draggedId);
+                }
 
+                ShellLogger.Debug($"[DragCommit] insertedAt={insertIdx} of {(isNowOnPinnedSide ? "pinned" : "hide")}List len={targetList.Count}");
                 ShellLogger.Debug($"[DragCommit] after: hideOrder=[{string.Join(",",hideOrder)}] pinnedOrder=[{string.Join(",",pinnedOrder)}]");
 
                 Settings.Instance.NotifyIconOrderHide = hideOrder;
