@@ -14,6 +14,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
+using System.Windows.Media;
 using Application = System.Windows.Application;
 
 namespace RetroBar
@@ -141,6 +142,36 @@ namespace RetroBar
         private void Taskbar_OnContextMenuOpening(object sender, ContextMenuEventArgs e)
         {
             if (Handle != IntPtr.Zero) ForceForeground(Handle);
+
+            // Populate/enable menu items here, before the popup is created and sized, rather than in
+            // its Opened handler - mutating item Visibility/content after the popup is already shown
+            // and positioned made it visibly resize/reflow right after appearing (a flicker).
+            ContextMenu menu = FindContextMenu(e.OriginalSource as DependencyObject);
+            if (menu != null)
+            {
+                RefreshWorkspaceMenuItems(menu);
+                SetBtopMenuItemVisibility(menu);
+                SetGatherAllWindowsEnabled(menu);
+            }
+
+            if (_updater.IsUpdateAvailable)
+            {
+                UpdateAvailableMenuItem.Visibility = Visibility.Visible;
+            }
+        }
+
+        // ContextMenu is not an inherited dependency property, so the element that raised
+        // ContextMenuOpening (e.OriginalSource) may be a descendant of the element it's actually
+        // set on - walk up until we find it, the same way WPF resolves which menu to show.
+        private static ContextMenu FindContextMenu(DependencyObject source)
+        {
+            while (source != null)
+            {
+                if (source is FrameworkElement fe && fe.ContextMenu != null)
+                    return fe.ContextMenu;
+                source = VisualTreeHelper.GetParent(source) ?? LogicalTreeHelper.GetParent(source);
+            }
+            return null;
         }
 
         private void OnPreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
@@ -690,12 +721,11 @@ namespace RetroBar
         private void TrayContextMenu_Opened(object sender, RoutedEventArgs e)
         {
             if (sender is not ContextMenu menu) return;
-            RefreshWorkspaceMenuItems(menu);
-            SetBtopMenuItemVisibility(menu);
             _openTrayContextMenu = menu;
 
-            // Foreground is already forced in Taskbar_OnContextMenuOpening (before this popup was
-            // created); see ForceForeground for why that matters for clicking into elevated windows.
+            // Foreground is already forced, and menu items already populated, in
+            // Taskbar_OnContextMenuOpening (before this popup was created); see ForceForeground and
+            // FindContextMenu for why that matters.
 
             _trayContextMenuHook = new LowLevelMouseHook();
             _trayContextMenuHook.LowLevelMouseEvent += OnTrayContextMenuMouseEvent;
@@ -760,24 +790,17 @@ namespace RetroBar
         {
             if (sender is ContextMenu menu)
             {
-                RefreshWorkspaceMenuItems(menu);
-                SetBtopMenuItemVisibility(menu);
-                SetGatherAllWindowsEnabled(menu);
                 _openTrayContextMenu = menu;
 
-                // Foreground is already forced in Taskbar_OnContextMenuOpening (before this popup was
-                // created); see ForceForeground for why that matters for clicking into elevated windows.
+                // Foreground is already forced, and menu items already populated, in
+                // Taskbar_OnContextMenuOpening (before this popup was created); see ForceForeground
+                // and FindContextMenu for why that matters.
 
                 _trayContextMenuHook = new LowLevelMouseHook();
                 _trayContextMenuHook.LowLevelMouseEvent += OnTrayContextMenuMouseEvent;
                 _trayContextMenuHook.Initialize();
 
                 hotkeyManager.EscapeKeyDown += CloseTrayContextMenuOnEscape;
-            }
-
-            if (_updater.IsUpdateAvailable)
-            {
-                UpdateAvailableMenuItem.Visibility = Visibility.Visible;
             }
         }
 
