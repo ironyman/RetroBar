@@ -101,7 +101,7 @@ namespace RetroBar.Controls
 
             DoubleAnimation animation = new DoubleAnimation();
             animation.From = 0;
-            animation.To = Host?.ButtonWidth ?? ActualWidth;
+            animation.To = Host?.TargetButtonWidth ?? ActualWidth;
             animation.Duration = new Duration(TimeSpan.FromMilliseconds(250));
             animation.FillBehavior = FillBehavior.Stop;
             animation.EasingFunction = ease;

@@ -41,6 +41,12 @@ namespace RetroBar.Controls
             set { SetValue(ButtonWidthProperty, value); }
         }
 
+        // The width every button is heading toward - equals ButtonWidth except while a shared
+        // width animation is running, when ButtonWidth reads the eased in-between value. Slide-in
+        // reveals animate toward this so they land on the settled width, not a mid-animation one.
+        private double _targetButtonWidth;
+        public double TargetButtonWidth => _targetButtonWidth > 0 ? _targetButtonWidth : ButtonWidth;
+
         public static DependencyProperty TasksProperty = DependencyProperty.Register(nameof(Tasks), typeof(Tasks), typeof(TaskList), new PropertyMetadata(TasksChangedCallback));
 
         public Tasks Tasks
@@ -484,7 +490,9 @@ namespace RetroBar.Controls
 
         private void GroupedWindows_CollectionChanged(object sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
         {
-            SetTaskButtonWidth();
+            // Width changes caused by buttons appearing/disappearing ease into place so the whole
+            // row shrinks or grows as one motion (e.g. uncollapsing a group) instead of snapping.
+            SetTaskButtonWidth(animate: true);
 
             var action = e.Action;
 
@@ -618,14 +626,14 @@ namespace RetroBar.Controls
             SetTaskButtonWidth();
         }
 
-        private void SetTaskButtonWidth()
+        private void SetTaskButtonWidth(bool animate = false)
         {
             if (Host is null)
                 return; // The state is trashed, but presumably it's just a transition
 
             if (Settings.Instance.Edge == AppBarEdge.Left || Settings.Instance.Edge == AppBarEdge.Right)
             {
-                ButtonWidth = ActualWidth;
+                ApplyButtonWidth(ActualWidth, false);
                 SetScrollable(true); // while technically not always scrollable, we don't run into DPI-specific issues with it enabled while vertical
                 return;
             }
@@ -660,7 +668,7 @@ namespace RetroBar.Controls
             }
 
             ShellLogger.Debug($"TaskList: SetTaskButtonWidth taskCount={taskCount} rows={rows} availableWidth={availableWidth:F3} maxWidth={maxWidth:F3} defaultWidth={defaultWidth} newButtonWidth={newButtonWidth:F3} totalWidth={taskCount * newButtonWidth:F3} overflow={taskCount * newButtonWidth > availableWidth} dpiScale={Host.DpiScale}");
-            ButtonWidth = newButtonWidth;
+            ApplyButtonWidth(newButtonWidth, animate);
 
             // Post-layout check: confirm actual layout after WPF processes the width change
             Dispatcher.BeginInvoke(DispatcherPriority.Loaded, (Action)(() =>
@@ -670,6 +678,33 @@ namespace RetroBar.Controls
                 double wrapWidth = wrapPanel?.ActualWidth ?? -1;
                 ShellLogger.Debug($"TaskList: Post-layout TasksList.ActualWidth={TasksList.ActualWidth:F3} ButtonWidth={ButtonWidth:F3} itemCount={TasksList.Items.Count} wrapPanel={wrapWidth:F3}x{wrapHeight:F3} taskbarHeight={ActualHeight:F3} wrapping={wrapHeight > ActualHeight + 1}");
             }));
+        }
+
+        // Applies a new shared button width, optionally easing every button from the current width
+        // to the new one in unison instead of snapping - reflows caused by buttons appearing or
+        // disappearing (a group collapsing/uncollapsing, a window opening/closing) read much
+        // smoother animated, whereas taskbar resizes should track the mouse instantly. The local
+        // (unanimated) value is always the target, so anything reading ButtonWidth after the
+        // animation stops sees the settled width.
+        private void ApplyButtonWidth(double newWidth, bool animate)
+        {
+            double oldWidth = ButtonWidth; // reads the eased value if an animation is in flight
+            _targetButtonWidth = newWidth;
+
+            if (!animate || oldWidth <= 0 || Math.Abs(newWidth - oldWidth) < 0.5)
+            {
+                BeginAnimation(ButtonWidthProperty, null);
+                ButtonWidth = newWidth;
+                return;
+            }
+
+            ButtonWidth = newWidth;
+            var animation = new DoubleAnimation(oldWidth, newWidth, TimeSpan.FromMilliseconds(250))
+            {
+                EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut },
+                FillBehavior = FillBehavior.Stop
+            };
+            BeginAnimation(ButtonWidthProperty, animation);
         }
 
         private void SetScrollable(bool canScroll)
