@@ -101,11 +101,27 @@ namespace RetroBar.Controls
                 taskbarItems = Tasks.CreateGroupedWindowsCollection();
                 if (taskbarItems != null)
                 {
-                    taskbarItems.CollectionChanged += GroupedWindows_CollectionChanged;
                     taskbarItems.Filter = Tasks_Filter;
                 }
 
                 TasksList.ItemsSource = taskbarItems;
+
+                // Subscribed only after ItemsSource is wired up, so that WPF's own internal handling
+                // of taskbarItems.CollectionChanged (which updates TasksList's ItemContainerGenerator/
+                // visual children) always runs before ours. Our handler reacts to the same event by
+                // touching layout-affecting state (SetTaskButtonWidth, group bookkeeping that queries
+                // ContainerFromIndex) - if it ran first, it would race the framework's own container
+                // bookkeeping for that same notification. That race was rare enough to go unnoticed
+                // when the width change applied instantly, but an animated width change keeps an
+                // AnimationClock invalidating layout for the next 250ms, widening the window in which
+                // a subsequent drag attempt could observe a still-desyncing generator - manifesting as
+                // ItemContainerGenerator permanently returning no container for some index (button
+                // silently missing) and StartButtonDrag's per-index container check bailing forever
+                // (drag looking permanently disabled).
+                if (taskbarItems != null)
+                {
+                    taskbarItems.CollectionChanged += GroupedWindows_CollectionChanged;
+                }
 
                 // A collapsed group's hidden members can still become the active window (e.g. via
                 // Alt+Tab); track every window's State so the filter can be re-run and reveal it.
@@ -1909,6 +1925,52 @@ namespace RetroBar.Controls
                     taskbarItems?.Refresh();
                 _groupManager.ApplyGroupVisuals();
             }));
+        }
+
+        // Cancels an in-progress live drag without committing any reorder - used when the backing
+        // window collection changes out from under the drag's container/index snapshot (see the
+        // Add/Remove/Reset check in GroupedWindows_CollectionChanged). Mirrors CommitDragCleanup's
+        // teardown but skips CommitDragCore entirely, since the snapshot it would reorder against is
+        // already stale.
+        private void AbortButtonDrag()
+        {
+            CancelGroupHover();
+
+            if (_dragContainers != null)
+            {
+                foreach (var cp in _dragContainers)
+                {
+                    if (cp.RenderTransform is TranslateTransform t)
+                    {
+                        t.BeginAnimation(TranslateTransform.XProperty, null);
+                        t.BeginAnimation(TranslateTransform.YProperty, null);
+                    }
+                    cp.RenderTransform = null;
+                    Panel.SetZIndex(cp, 0);
+                }
+            }
+
+            _isDragging = false;
+            _dragContainer = null;
+            _dragContainers = null;
+            _dragSlots = null;
+            _dragSizes = null;
+            _dragPanel = null;
+            _dragSiblingTargets.Clear();
+            _dragGroupMemberIndices = new List<int>();
+            _dragGroupSorted = new List<int>();
+            _dragGroupPrimaryOffset = 0;
+            _dragBlockStartPos = new List<int>();
+            _dragBlockGap = 0;
+            _dragIsSolo = false;
+            _dragOriginalGroup = null;
+            _dragSoloOriginalGroup = null;
+            _dragSoloGroupBlockFirst = -1;
+            _dragSoloGroupBlockLast = -1;
+            _dragSoloGroupFirstItemIdx = -1;
+            _dragSoloGroupLastItemIdx = -1;
+            _dragSoloInGroup = false;
+            _dragCommittedMerge = false;
         }
 
         private static TranslateTransform GetTranslate(ContentPresenter cp)

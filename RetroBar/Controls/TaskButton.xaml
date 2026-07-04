@@ -52,6 +52,11 @@
         <Button.ContextMenu>
             <ContextMenu Opened="ContextMenu_OpenedOrClosed"
                          Closed="ContextMenu_OpenedOrClosed">
+                <ContextMenu.Placement>
+                    <MultiBinding Converter="{StaticResource toolTipPlacementConverter}" UpdateSourceTrigger="PropertyChanged">
+                        <Binding Source="{x:Static utilities:Settings.Instance}" Path="Edge"/>
+                    </MultiBinding>
+                </ContextMenu.Placement>
                 <MenuItem Header="{DynamicResource restore}"
                           Click="RestoreMenuItem_OnClick"
                           Name="RestoreMenuItem">
@@ -88,7 +93,8 @@
                                    VerticalAlignment="Center" />
                     </MenuItem.Icon>
                 </MenuItem>
-                <Separator />
+                <Separator Name="GroupTopSeparator"
+                           Visibility="Collapsed" />
                 <MenuItem Header="{DynamicResource remove_from_group}"
                           Click="RemoveFromGroupMenuItem_OnClick"
                           Name="RemoveFromGroupMenuItem"
