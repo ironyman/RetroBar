@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Net.NetworkInformation;
 using System.Runtime.InteropServices;
 using System.Timers;
 using System.Windows;
@@ -27,14 +28,31 @@ namespace RetroBar.Utilities
         public ulong MemoryUsedBytes { get; private set; }
         public ulong MemoryTotalBytes { get; private set; }
 
+        public double DownloadBytesPerSecond { get; private set; }
+        public double UploadBytesPerSecond { get; private set; }
+        public double DownloadPercent { get; private set; }
+        public double UploadPercent { get; private set; }
+
         public Queue<double> CpuHistory { get; } = new Queue<double>(HistoryCapacity);
         public Queue<double> MemoryHistory { get; } = new Queue<double>(HistoryCapacity);
         public Queue<double> DiskHistory { get; } = new Queue<double>(HistoryCapacity);
+        public Queue<double> DownloadHistory { get; } = new Queue<double>(HistoryCapacity);
+        public Queue<double> UploadHistory { get; } = new Queue<double>(HistoryCapacity);
 
         private readonly Timer _timer;
         private readonly Dispatcher _dispatcher;
         private PerformanceCounter _cpuCounter;
         private PerformanceCounter _diskCounter;
+
+        // Re-resolve the default-route adapter periodically so we notice link changes
+        // (switching Wi-Fi networks, plugging in Ethernet, connecting a VPN, etc.).
+        private const int NetworkResolveIntervalTicks = 15;
+        private int _networkResolveCountdown;
+        private NetworkInterface _networkInterface;
+        private long _lastBytesReceived = -1;
+        private long _lastBytesSent = -1;
+        private double _maxDownloadBytesPerSecond;
+        private double _maxUploadBytesPerSecond;
 
         private SystemStatsService()
         {
@@ -82,6 +100,19 @@ namespace RetroBar.Utilities
                 used = mem.ullTotalPhys - mem.ullAvailPhys;
             }
 
+            (double downBps, double upBps) = SampleNetwork();
+            if (downBps > _maxDownloadBytesPerSecond)
+            {
+                _maxDownloadBytesPerSecond = downBps;
+            }
+            if (upBps > _maxUploadBytesPerSecond)
+            {
+                _maxUploadBytesPerSecond = upBps;
+            }
+
+            double downPercent = _maxDownloadBytesPerSecond > 0 ? Math.Min(100, downBps / _maxDownloadBytesPerSecond * 100) : 0;
+            double upPercent = _maxUploadBytesPerSecond > 0 ? Math.Min(100, upBps / _maxUploadBytesPerSecond * 100) : 0;
+
             _dispatcher.Invoke(() =>
             {
                 CpuPercent = cpu;
@@ -89,13 +120,68 @@ namespace RetroBar.Utilities
                 DiskPercent = disk;
                 MemoryUsedBytes = used;
                 MemoryTotalBytes = total;
+                DownloadBytesPerSecond = downBps;
+                UploadBytesPerSecond = upBps;
+                DownloadPercent = downPercent;
+                UploadPercent = upPercent;
 
                 Enqueue(CpuHistory, cpu);
                 Enqueue(MemoryHistory, memPercent);
                 Enqueue(DiskHistory, disk);
+                Enqueue(DownloadHistory, downPercent);
+                Enqueue(UploadHistory, upPercent);
 
                 StatsUpdated?.Invoke();
             });
+        }
+
+        private (double downBps, double upBps) SampleNetwork()
+        {
+            _networkResolveCountdown--;
+            if (_networkInterface == null || _networkResolveCountdown <= 0)
+            {
+                _networkResolveCountdown = NetworkResolveIntervalTicks;
+                NetworkInterface resolved = NetworkInterfaceResolver.GetDefaultRouteInterface();
+                if (resolved != null && (_networkInterface == null || resolved.Id != _networkInterface.Id))
+                {
+                    _networkInterface = resolved;
+                    _lastBytesReceived = -1;
+                    _lastBytesSent = -1;
+                }
+                else if (resolved == null)
+                {
+                    _networkInterface = null;
+                }
+            }
+
+            if (_networkInterface == null)
+            {
+                return (0, 0);
+            }
+
+            try
+            {
+                IPv4InterfaceStatistics stats = _networkInterface.GetIPv4Statistics();
+                long rx = stats.BytesReceived;
+                long tx = stats.BytesSent;
+
+                double downBps = 0, upBps = 0;
+                if (_lastBytesReceived >= 0)
+                {
+                    downBps = Math.Max(0, rx - _lastBytesReceived);
+                    upBps = Math.Max(0, tx - _lastBytesSent);
+                }
+
+                _lastBytesReceived = rx;
+                _lastBytesSent = tx;
+                return (downBps, upBps);
+            }
+            catch (Exception ex)
+            {
+                ManagedShell.Common.Logging.ShellLogger.Error("SystemStatsService: Failed to read network statistics", ex);
+                _networkInterface = null;
+                return (0, 0);
+            }
         }
 
         private static double SafeNextValue(PerformanceCounter counter)

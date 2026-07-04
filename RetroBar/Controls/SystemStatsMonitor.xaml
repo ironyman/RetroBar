@@ -16,5 +16,6 @@
         <controls:ResourceMeter Kind="Cpu" Margin="2" />
         <controls:ResourceMeter Kind="Memory" Margin="2" />
         <controls:ResourceMeter Kind="Disk" Margin="2" />
+        <controls:NetworkMeter Margin="2" />
     </StackPanel>
 </UserControl>

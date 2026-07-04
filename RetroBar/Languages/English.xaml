@@ -155,6 +155,7 @@
     <s:String x:Key="system_stats_cpu">CPU</s:String>
     <s:String x:Key="system_stats_memory">Memory</s:String>
     <s:String x:Key="system_stats_disk">Disk (C:)</s:String>
+    <s:String x:Key="system_stats_network">Network</s:String>
     <s:String x:Key="no_recently_closed">(empty)</s:String>
     <s:String x:Key="clear_recently_closed">C_lear list</s:String>
     <s:String x:Key="always_on_top">Always on _top</s:String>
