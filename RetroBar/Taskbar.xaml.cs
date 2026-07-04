@@ -150,6 +150,7 @@ namespace RetroBar
             if (menu != null)
             {
                 RefreshWorkspaceMenuItems(menu);
+                RefreshClosedWindowsMenuItems(menu);
                 SetBtopMenuItemVisibility(menu);
                 SetGatherAllWindowsEnabled(menu);
             }
@@ -716,6 +717,58 @@ namespace RetroBar
                     wsMenu.Items.Add(item);
                 }
             }
+        }
+
+        private static void RefreshClosedWindowsMenuItems(ContextMenu menu)
+        {
+            MenuItem closedMenu = null;
+            foreach (var obj in menu.Items)
+            {
+                if (obj is MenuItem mi && mi.Tag as string == "recently-closed")
+                {
+                    closedMenu = mi;
+                    break;
+                }
+            }
+            if (closedMenu == null) return;
+
+            closedMenu.Items.Clear();
+
+            var closedWindows = Settings.Instance.ClosedWindows;
+            if (closedWindows.Count == 0)
+            {
+                closedMenu.Items.Add(new MenuItem
+                {
+                    Header = menu.FindResource("no_recently_closed"),
+                    IsEnabled = false
+                });
+                closedMenu.IsEnabled = false;
+                return;
+            }
+
+            closedMenu.IsEnabled = true;
+            foreach (var entry in closedWindows)
+            {
+                string exePath = entry.ExePath;
+                string exeName = Path.GetFileName(exePath);
+                var item = new MenuItem
+                {
+                    Header = $"{entry.Title} ({exeName})",
+                    Icon = new Image
+                    {
+                        Source = IconImageConverter.GetImageFromAssociatedIcon(exePath, ManagedShell.Common.Enums.IconSize.Small),
+                        Width = 16,
+                        Height = 16
+                    }
+                };
+                item.Click += (_, _) => ShellHelper.StartProcess(exePath);
+                closedMenu.Items.Add(item);
+            }
+
+            closedMenu.Items.Add(new Separator());
+            var clearItem = new MenuItem { Header = menu.FindResource("clear_recently_closed") };
+            clearItem.Click += (_, _) => Settings.Instance.ClosedWindows = new System.Collections.Generic.List<ClosedWindowEntry>();
+            closedMenu.Items.Add(clearItem);
         }
 
         private void TrayContextMenu_Opened(object sender, RoutedEventArgs e)

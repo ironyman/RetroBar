@@ -602,6 +602,32 @@ namespace RetroBar.Controls
             }
         }
 
+        // Records genuinely-closed windows into Settings.ClosedWindows so they can be relaunched
+        // from the taskbar context menu. Skips UWP windows since their exe (ApplicationFrameHost.exe)
+        // isn't the actual app and their AppUserModelID isn't reliably available once the window is gone.
+        private const int MaxClosedWindowHistory = 10;
+
+        private static void RecordClosedWindows(List<ApplicationWindow> genuinelyGone)
+        {
+            var updated = new List<ClosedWindowEntry>(Settings.Instance.ClosedWindows);
+
+            foreach (var w in genuinelyGone)
+            {
+                if (w.IsUWP || string.IsNullOrEmpty(w.WinFileName) || string.IsNullOrEmpty(w.Title))
+                    continue;
+
+                updated.RemoveAll(entry => entry.ExePath == w.WinFileName && entry.Title == w.Title);
+                updated.Insert(0, new ClosedWindowEntry { Title = w.Title, ExePath = w.WinFileName });
+            }
+
+            if (updated.Count > MaxClosedWindowHistory)
+            {
+                updated.RemoveRange(MaxClosedWindowHistory, updated.Count - MaxClosedWindowHistory);
+            }
+
+            Settings.Instance.ClosedWindows = updated;
+        }
+
         private void HandleGroupedWindowsRemovalOrReset(System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
         {
             var action = e.Action;
@@ -638,6 +664,7 @@ namespace RetroBar.Controls
                     if (anyWasGrouped)
                         ShellLogger.Debug($"TaskList: window(s) closed while grouped: {string.Join(", ", genuinelyGone.Select(w => w.Title))}, isDragging={_isDragging} tick={Environment.TickCount}");
                     changed = _groupManager.RemoveWindows(genuinelyGone);
+                    RecordClosedWindows(genuinelyGone);
                 }
 
                 // A grouped window that's still around but cloaked (not merely monitor-filtered)
@@ -693,7 +720,7 @@ namespace RetroBar.Controls
             double height = ActualHeight;
             int rows = Host.Rows;
 
-            int taskCount = TasksList.Items.Count;
+            int taskCount = Math.Max(1, TasksList.Items.Count - excludeCount);
             double margin = TaskButtonLeftMargin + TaskButtonRightMargin;
             double availableWidth = TasksList.ActualWidth;
             double maxWidth = availableWidth / Math.Ceiling((double)taskCount / rows);

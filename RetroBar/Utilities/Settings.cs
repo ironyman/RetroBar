@@ -268,6 +268,13 @@ namespace RetroBar.Utilities
             set => Set(ref _quickLaunchOrder, value);
         }
 
+        private List<ClosedWindowEntry> _closedWindows = new List<ClosedWindowEntry>();
+        public List<ClosedWindowEntry> ClosedWindows
+        {
+            get => _closedWindows;
+            set => Set(ref _closedWindows, value);
+        }
+
         private bool _showTaskThumbnails = false;
         public bool ShowTaskThumbnails
         {
@@ -525,6 +532,12 @@ namespace RetroBar.Utilities
     {
         public string Identifier {  get; set; }
         public NotifyIconBehavior Behavior { get; set; }
+    }
+
+    public struct ClosedWindowEntry
+    {
+        public string Title { get; set; }
+        public string ExePath { get; set; }
     }
     #endregion
 }

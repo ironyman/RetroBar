@@ -149,6 +149,9 @@
     <s:String x:Key="collapse_all">Collapse _all</s:String>
     <s:String x:Key="uncollapse_all">_Uncollapse all</s:String>
     <s:String x:Key="gather_all_windows">_Gather all windows</s:String>
+    <s:String x:Key="recently_closed">Recently closed</s:String>
+    <s:String x:Key="no_recently_closed">(empty)</s:String>
+    <s:String x:Key="clear_recently_closed">C_lear list</s:String>
     <s:String x:Key="always_on_top">Always on _top</s:String>
     <s:String x:Key="pin_all_workspaces">_Pin to all workspaces</s:String>
     <s:String x:Key="center_on_screen">C_enter on screen</s:String>

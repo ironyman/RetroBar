@@ -149,6 +149,8 @@
             <Separator />
             <MenuItem Header="Workspaces" Tag="workspace-switcher" />
             <Separator Tag="workspace-sep" />
+            <MenuItem Header="{DynamicResource recently_closed}" Tag="recently-closed" />
+            <Separator Tag="recently-closed-sep" />
             <MenuItem Header="{DynamicResource gather_all_windows}"
                       Click="GatherAllWindowsMenuItem_OnClick"
                       Tag="gather-all-windows" />
