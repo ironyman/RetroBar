@@ -146,6 +146,8 @@
     <s:String x:Key="tile_group">_Tile group</s:String>
     <s:String x:Key="group_new_color">New _color</s:String>
     <s:String x:Key="collapse_group">_Collapse group</s:String>
+    <s:String x:Key="close_group">Close g_roup</s:String>
+    <s:String x:Key="close_all_windows">Close all instances</s:String>
     <s:String x:Key="collapse_all">Collapse _all</s:String>
     <s:String x:Key="uncollapse_all">_Uncollapse all</s:String>
     <s:String x:Key="gather_all_windows">_Gather all windows</s:String>

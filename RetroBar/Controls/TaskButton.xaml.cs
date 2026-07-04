@@ -2,6 +2,7 @@ using System;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
@@ -186,6 +187,7 @@ namespace RetroBar.Controls
             TileGroupMenuItem.Visibility = vis;
             GroupNewColorMenuItem.Visibility = vis;
             CollapseGroupMenuItem.Visibility = vis;
+            CloseGroupMenuItem.Visibility = vis;
         }
 
         private void Window_GetButtonRect(ref NativeMethods.ShortRect rect)
@@ -316,11 +318,33 @@ namespace RetroBar.Controls
             CenterOnScreenMenuItem.IsEnabled = wss != NativeMethods.WindowShowStyle.ShowMinimized;
             OpenContainingFolderMenuItem.Visibility = (!Window.IsUWP && !string.IsNullOrEmpty(Window.WinFileName))
                 ? Visibility.Visible : Visibility.Collapsed;
+
+            bool hasOtherSameExe = !string.IsNullOrEmpty(Window.WinFileName) && Host?.Tasks?.GroupedWindows != null
+                && Host.Tasks.GroupedWindows.Cast<ApplicationWindow>()
+                    .Any(w => w != Window && string.Equals(w.WinFileName, Window.WinFileName, StringComparison.OrdinalIgnoreCase));
+            CloseAllMenuItem.Visibility = hasOtherSameExe ? Visibility.Visible : Visibility.Collapsed;
         }
 
         private void CloseMenuItem_OnClick(object sender, RoutedEventArgs e)
         {
             Window?.Close();
+        }
+
+        private void CloseAllMenuItem_OnClick(object sender, RoutedEventArgs e)
+        {
+            if (Window == null || string.IsNullOrEmpty(Window.WinFileName) || Host?.Tasks?.GroupedWindows == null)
+            {
+                return;
+            }
+
+            var matching = Host.Tasks.GroupedWindows.Cast<ApplicationWindow>()
+                .Where(w => string.Equals(w.WinFileName, Window.WinFileName, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            foreach (var w in matching)
+            {
+                w.Close();
+            }
         }
 
         private void EndTaskMenuItem_OnClick(object sender, RoutedEventArgs e)
@@ -388,6 +412,20 @@ namespace RetroBar.Controls
         private void RemoveGroupMenuItem_OnClick(object sender, RoutedEventArgs e)
         {
             Host?.RemoveGroup(Window);
+        }
+
+        private void CloseGroupMenuItem_OnClick(object sender, RoutedEventArgs e)
+        {
+            if (Window == null || Host == null)
+            {
+                return;
+            }
+
+            var groupWindows = Host.GetGroupWindows(Window);
+            foreach (var w in groupWindows)
+            {
+                w.Close();
+            }
         }
 
         private void TileGroupMenuItem_OnClick(object sender, RoutedEventArgs e)

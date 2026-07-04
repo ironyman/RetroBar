@@ -95,6 +95,10 @@
                 </MenuItem>
                 <Separator Name="GroupTopSeparator"
                            Visibility="Collapsed" />
+                <MenuItem Header="{DynamicResource close_group}"
+                          Click="CloseGroupMenuItem_OnClick"
+                          Name="CloseGroupMenuItem"
+                          Visibility="Collapsed" />
                 <MenuItem Header="{DynamicResource remove_from_group}"
                           Click="RemoveFromGroupMenuItem_OnClick"
                           Name="RemoveFromGroupMenuItem"
@@ -123,6 +127,10 @@
                           Name="PinAllWorkspacesMenuItem"
                           IsCheckable="True" />
                 <Separator />
+                <MenuItem Header="{DynamicResource close_all_windows}"
+                          Click="CloseAllMenuItem_OnClick"
+                          Name="CloseAllMenuItem"
+                          Visibility="Collapsed" />
                 <MenuItem Header="{DynamicResource always_on_top}"
                           Click="AlwaysOnTopMenuItem_OnClick"
                           Name="AlwaysOnTopMenuItem"
