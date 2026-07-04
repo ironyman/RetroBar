@@ -4,8 +4,8 @@
              xmlns:converters="clr-namespace:RetroBar.Converters"
              xmlns:utilities="clr-namespace:RetroBar.Utilities"
              Focusable="False"
-             Width="16"
-             Height="16"
+             Width="20"
+             Height="20"
              SnapsToDevicePixels="True"
              UseLayoutRounding="True">
     <UserControl.Resources>
@@ -29,18 +29,18 @@
             </StackPanel>
         </ToolTip>
     </UserControl.ToolTip>
-    <Grid Width="16" Height="16">
-        <Canvas Width="16" Height="16">
-            <Path x:Name="TrackPath" StrokeThickness="1.4" StrokeStartLineCap="Round" StrokeEndLineCap="Round">
+    <Grid Width="20" Height="20">
+        <Canvas Width="20" Height="20">
+            <Path x:Name="TrackPath" StrokeThickness="1.6" StrokeStartLineCap="Round" StrokeEndLineCap="Round">
                 <Path.Stroke>
                     <SolidColorBrush Color="Gray" Opacity="0.4" />
                 </Path.Stroke>
             </Path>
-            <Path x:Name="FillPath" StrokeThickness="1.4" StrokeStartLineCap="Round" StrokeEndLineCap="Round" />
+            <Path x:Name="FillPath" StrokeThickness="1.6" StrokeStartLineCap="Round" StrokeEndLineCap="Round" />
         </Canvas>
         <TextBlock x:Name="IconText"
                    FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
-                   FontSize="9"
+                   FontSize="11"
                    HorizontalAlignment="Center"
                    VerticalAlignment="Center"
                    Foreground="{DynamicResource ClockForeground}" />

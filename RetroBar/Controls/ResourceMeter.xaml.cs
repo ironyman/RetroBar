@@ -32,8 +32,8 @@ namespace RetroBar.Controls
         private const double GapHalfAngle = 35;
         private const double StartAngle = 270 + GapHalfAngle;
         private const double TotalSweep = 360 - (2 * GapHalfAngle);
-        private const double Radius = 6.5;
-        private const double Center = 8;
+        private const double Radius = 8.2;
+        private const double Center = 10;
         private const double RedThreshold = 90;
 
         public static readonly DependencyProperty KindProperty = DependencyProperty.Register(

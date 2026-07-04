@@ -4,8 +4,8 @@
              xmlns:converters="clr-namespace:RetroBar.Converters"
              xmlns:utilities="clr-namespace:RetroBar.Utilities"
              Focusable="False"
-             Width="16"
-             Height="16"
+             Width="20"
+             Height="20"
              SnapsToDevicePixels="True"
              UseLayoutRounding="True">
     <UserControl.Resources>
@@ -20,6 +20,8 @@
             </ToolTip.Placement>
             <StackPanel Margin="4" MinWidth="150">
                 <TextBlock x:Name="TipTitle" FontWeight="Bold" />
+                <TextBlock x:Name="TipAdapterName" />
+                <TextBlock x:Name="TipIpAddress" Margin="0,0,0,2" />
                 <TextBlock x:Name="TipDownloadDetail" Margin="0,2,0,0" />
                 <Canvas x:Name="DownloadGraphCanvas" Width="150" Height="30" ClipToBounds="True" Margin="0,0,0,4">
                     <Canvas.Background>
@@ -35,25 +37,25 @@
             </StackPanel>
         </ToolTip>
     </UserControl.ToolTip>
-    <Grid Width="16" Height="16">
-        <Canvas Width="16" Height="16">
-            <Path x:Name="DownloadTrackPath" StrokeThickness="1.4" StrokeStartLineCap="Round" StrokeEndLineCap="Round">
+    <Grid Width="20" Height="20">
+        <Canvas Width="20" Height="20">
+            <Path x:Name="DownloadTrackPath" StrokeThickness="1.6" StrokeStartLineCap="Round" StrokeEndLineCap="Round">
                 <Path.Stroke>
                     <SolidColorBrush Color="Gray" Opacity="0.4" />
                 </Path.Stroke>
             </Path>
-            <Path x:Name="UploadTrackPath" StrokeThickness="1.4" StrokeStartLineCap="Round" StrokeEndLineCap="Round">
+            <Path x:Name="UploadTrackPath" StrokeThickness="1.6" StrokeStartLineCap="Round" StrokeEndLineCap="Round">
                 <Path.Stroke>
                     <SolidColorBrush Color="Gray" Opacity="0.4" />
                 </Path.Stroke>
             </Path>
-            <Path x:Name="DownloadFillPath" StrokeThickness="1.4" StrokeStartLineCap="Round" StrokeEndLineCap="Round" />
-            <Path x:Name="UploadFillPath" StrokeThickness="1.4" StrokeStartLineCap="Round" StrokeEndLineCap="Round" />
+            <Path x:Name="DownloadFillPath" StrokeThickness="1.6" StrokeStartLineCap="Round" StrokeEndLineCap="Round" />
+            <Path x:Name="UploadFillPath" StrokeThickness="1.6" StrokeStartLineCap="Round" StrokeEndLineCap="Round" />
         </Canvas>
         <TextBlock x:Name="IconText"
                    Text="&#xEDA3;"
                    FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
-                   FontSize="9"
+                   FontSize="11"
                    HorizontalAlignment="Center"
                    VerticalAlignment="Center"
                    Foreground="{DynamicResource ClockForeground}" />

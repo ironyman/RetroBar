@@ -24,8 +24,8 @@ namespace RetroBar.Controls
         private const double DownloadStartAngle = 270 - GapHalfAngle; // bottom-left anchor
         private const double UploadStartAngle = 270 + GapHalfAngle;   // bottom-right anchor
         private const double TotalSweep = 180 - (2 * GapHalfAngle);
-        private const double Radius = 6.5;
-        private const double Center = 8;
+        private const double Radius = 8.2;
+        private const double Center = 10;
         private const double RedThreshold = 90;
 
         public NetworkMeter()
@@ -75,6 +75,10 @@ namespace RetroBar.Controls
             {
                 IconText.Text = NetworkGlyph;
             }
+
+            TipAdapterName.Text = service.NetworkAdapterName ?? (string)Application.Current.FindResource("system_stats_network_unavailable");
+            TipIpAddress.Text = service.NetworkIpAddress ?? string.Empty;
+            TipIpAddress.Visibility = string.IsNullOrEmpty(service.NetworkIpAddress) ? Visibility.Collapsed : Visibility.Visible;
 
             TipDownloadDetail.Text = $"↓ {FormatSpeed(service.DownloadBytesPerSecond)}";
             TipUploadDetail.Text = $"↑ {FormatSpeed(service.UploadBytesPerSecond)}";

@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Net.NetworkInformation;
+using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Timers;
 using System.Windows;
@@ -32,6 +34,8 @@ namespace RetroBar.Utilities
         public double UploadBytesPerSecond { get; private set; }
         public double DownloadPercent { get; private set; }
         public double UploadPercent { get; private set; }
+        public string NetworkAdapterName { get; private set; }
+        public string NetworkIpAddress { get; private set; }
 
         public Queue<double> CpuHistory { get; } = new Queue<double>(HistoryCapacity);
         public Queue<double> MemoryHistory { get; } = new Queue<double>(HistoryCapacity);
@@ -49,6 +53,8 @@ namespace RetroBar.Utilities
         private const int NetworkResolveIntervalTicks = 15;
         private int _networkResolveCountdown;
         private NetworkInterface _networkInterface;
+        private string _networkAdapterName;
+        private string _networkIpAddress;
         private long _lastBytesReceived = -1;
         private long _lastBytesSent = -1;
         private double _maxDownloadBytesPerSecond;
@@ -124,6 +130,8 @@ namespace RetroBar.Utilities
                 UploadBytesPerSecond = upBps;
                 DownloadPercent = downPercent;
                 UploadPercent = upPercent;
+                NetworkAdapterName = _networkAdapterName;
+                NetworkIpAddress = _networkIpAddress;
 
                 Enqueue(CpuHistory, cpu);
                 Enqueue(MemoryHistory, memPercent);
@@ -147,10 +155,14 @@ namespace RetroBar.Utilities
                     _networkInterface = resolved;
                     _lastBytesReceived = -1;
                     _lastBytesSent = -1;
+                    _networkAdapterName = resolved.Name;
+                    _networkIpAddress = GetIPv4Address(resolved);
                 }
                 else if (resolved == null)
                 {
                     _networkInterface = null;
+                    _networkAdapterName = null;
+                    _networkIpAddress = null;
                 }
             }
 
@@ -181,6 +193,20 @@ namespace RetroBar.Utilities
                 ManagedShell.Common.Logging.ShellLogger.Error("SystemStatsService: Failed to read network statistics", ex);
                 _networkInterface = null;
                 return (0, 0);
+            }
+        }
+
+        private static string GetIPv4Address(NetworkInterface ni)
+        {
+            try
+            {
+                UnicastIPAddressInformation address = ni.GetIPProperties()?.UnicastAddresses
+                    .FirstOrDefault(a => a.Address.AddressFamily == AddressFamily.InterNetwork);
+                return address?.Address.ToString();
+            }
+            catch
+            {
+                return null;
             }
         }
 
