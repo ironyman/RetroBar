@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
@@ -22,9 +22,10 @@ namespace RetroBar.Controls
     /// </summary>
     public partial class ResourceMeter : UserControl
     {
-        private const string CpuGlyph = "";
-        private const string MemoryGlyph = "";
-        private const string DiskGlyph = "";
+        // https://learn.microsoft.com/en-us/windows/apps/design/iconography/segoe-fluent-icons-font
+        private const string CpuGlyph = "\uEEA1";   // CPU
+        private const string MemoryGlyph = "\uEEA0"; // RAM
+        private const string DiskGlyph = "\uEE94"; // Wheel
 
         // The ring has a gap centered on the bottom (270 deg, standard math convention: 0=right, 90=up).
         // GapHalfAngle controls how wide that gap is; the track spans the remaining 360-2*GapHalfAngle degrees,

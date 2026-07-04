@@ -21,6 +21,8 @@
     Only code points in the Basic Multilingual Plane (0000-FFFF) are supported,
     which covers all current Segoe Fluent Icons / Segoe MDL2 Assets glyphs.
 
+    https://learn.microsoft.com/en-us/windows/apps/design/iconography/segoe-fluent-icons-font
+
 .PARAMETER Path
     Path to the source file to edit.
 

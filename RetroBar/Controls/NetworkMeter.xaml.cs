@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
@@ -16,7 +16,8 @@ namespace RetroBar.Controls
     /// </summary>
     public partial class NetworkMeter : UserControl
     {
-        private const string NetworkGlyph = "";
+        // https://learn.microsoft.com/en-us/windows/apps/design/iconography/segoe-fluent-icons-font
+        private const string NetworkGlyph = "\uEDA3"; // NetworkAdapter
 
         // Gaps are centered on the top (90deg) and bottom (270deg) of the circle, splitting
         // the ring into a left half (download) and a right half (upload).
