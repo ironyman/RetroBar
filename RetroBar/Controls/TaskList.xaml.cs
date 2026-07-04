@@ -490,11 +490,20 @@ namespace RetroBar.Controls
 
         private void GroupedWindows_CollectionChanged(object sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
         {
+            var action = e.Action;
+
             // Width changes caused by buttons appearing/disappearing ease into place so the whole
             // row shrinks or grows as one motion (e.g. uncollapsing a group) instead of snapping.
-            SetTaskButtonWidth(animate: true);
-
-            var action = e.Action;
+            // A Move can't change how many buttons are visible, so it never needs a width
+            // recompute - and reordering a collapsed group's members (e.g. committing a group
+            // drag) fires a burst of individual Move notifications where the members are
+            // momentarily non-contiguous, which can make the collapsed-group filter's "leftmost
+            // member is the representative" pick transiently flip. Recomputing width on those
+            // transient counts is what produced a spurious shrink/grow flash on every group drag.
+            if (action != System.Collections.Specialized.NotifyCollectionChangedAction.Move)
+            {
+                SetTaskButtonWidth(animate: true);
+            }
 
             // When a new window is inserted after its active parent (GroupAfterParent setting),
             // make sure it doesn't land in the middle of the parent's task group — if it lands

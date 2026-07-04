@@ -24,6 +24,8 @@
             <converters:EdgeOrientationConverter x:Key="edgeOrientationConverter" />
             <converters:DockOrientationConverter x:Key="dockOrientationConverter" />
             <converters:BoolToVisibilityConverter x:Key="boolToVisibilityConverter" />
+            <MenuItem x:Shared="false" x:Key="LockTaskbarMenuItem" Header="{DynamicResource lock_taskbar_menu}" IsCheckable="True" IsChecked="{Binding Source={x:Static utilities:Settings.Instance}, Path=LockTaskbar, UpdateSourceTrigger=PropertyChanged}" />
+            <MenuItem x:Shared="false" x:Key="PropertiesMenuItem" Header="{DynamicResource tray_properties}" Click="PropertiesMenuItem_OnClick" />
             <MenuItem x:Shared="false" x:Key="ToolbarsItem" Header="{DynamicResource toolbars}">
                 <MenuItem Header="{DynamicResource quick_launch}" IsCheckable="true" IsChecked="{Binding Source={x:Static utilities:Settings.Instance}, Path=ShowQuickLaunch, UpdateSourceTrigger=PropertyChanged}" />
                 <Separator />
@@ -33,8 +35,6 @@
             <MenuItem x:Shared="false" x:Key="CustomizeNotificationsMenuItem" Header="{DynamicResource customize_notifications_menu}" Click="CustomizeNotificationsMenuItem_OnClick" />
             <MenuItem x:Shared="false" x:Key="BtopMenuItem" Header="btop" Tag="btop" Click="BtopMenuItem_OnClick" Visibility="Collapsed" />
             <MenuItem x:Shared="false" x:Key="TaskManagerMenuItem" Style="{DynamicResource TaskManMenuItem}" Click="TaskManagerMenuItem_OnClick" />
-            <MenuItem x:Shared="false" x:Key="LockTaskbarMenuItem" Header="{DynamicResource lock_taskbar_menu}" IsCheckable="True" IsChecked="{Binding Source={x:Static utilities:Settings.Instance}, Path=LockTaskbar, UpdateSourceTrigger=PropertyChanged}" />
-            <MenuItem x:Shared="false" x:Key="PropertiesMenuItem" Header="{DynamicResource tray_properties}" Click="PropertiesMenuItem_OnClick" />
             <MenuItem x:Shared="false" x:Key="ExitMenuItem" Header="{DynamicResource exit_retrobar}" Click="ExitMenuItem_OnClick" Visibility="{Binding Source={x:Static utilities:Settings.Instance}, Path=ShowExitMenuItem, UpdateSourceTrigger=PropertyChanged, Converter={StaticResource boolToVisibilityConverter}}" />
         </ResourceDictionary>
     </Window.Resources>
@@ -92,6 +92,9 @@
             <GroupBox Style="{DynamicResource Tray}">
                 <GroupBox.ContextMenu>
                     <ContextMenu Opened="TrayContextMenu_Opened" Closed="TrayContextMenu_Closed">
+                        <StaticResourceExtension ResourceKey="LockTaskbarMenuItem" />
+                        <StaticResourceExtension ResourceKey="PropertiesMenuItem" />
+                        <Separator />
                         <MenuItem Header="Workspaces" Tag="workspace-switcher" />
                         <Separator Tag="workspace-sep" />
                         <!--StaticResourceExtension ResourceKey="ToolbarsItem" />
@@ -102,8 +105,6 @@
                         <StaticResourceExtension ResourceKey="BtopMenuItem" />
                         <StaticResourceExtension ResourceKey="TaskManagerMenuItem" />
                         <Separator />
-                        <StaticResourceExtension ResourceKey="LockTaskbarMenuItem" />
-                        <StaticResourceExtension ResourceKey="PropertiesMenuItem" />
                         <StaticResourceExtension ResourceKey="ExitMenuItem" />
                     </ContextMenu>
                 </GroupBox.ContextMenu>
