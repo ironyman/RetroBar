@@ -492,6 +492,23 @@ namespace RetroBar.Controls
         {
             var action = e.Action;
 
+            // A live drag snapshots TasksList's containers and their slot positions up front
+            // (StartButtonDrag) and indexes into that snapshot for the rest of the drag. Add/Remove/
+            // Reset regenerate containers out from under that snapshot - e.g. some window (not
+            // necessarily the dragged one) closing mid-drag - so the snapshot's indices no longer
+            // line up with TasksList's actual items. Continuing to drive the drag's geometry math or
+            // eventual commit against a stale snapshot risks an exception in a spot with no
+            // surrounding try/catch (permanently stuck _isDragging, since nothing then resets it -
+            // "drag and drop stops working") and/or a corrupted reorder commit (a window's button
+            // ending up misplaced enough to read as "disappeared", e.g. shoved inside a collapsed
+            // group's hidden span). There is no way to safely reconcile the snapshot with an
+            // out-of-band change, so just cancel the drag outright and let the user re-initiate it.
+            if (_isDragging && action != System.Collections.Specialized.NotifyCollectionChangedAction.Move)
+            {
+                ShellLogger.Debug($"TaskList: aborting in-progress drag - task collection changed ({action}) mid-drag, tick={Environment.TickCount}");
+                AbortButtonDrag();
+            }
+
             // Width changes caused by buttons appearing/disappearing ease into place so the whole
             // row shrinks or grows as one motion (e.g. uncollapsing a group) instead of snapping.
             // A Move can't change how many buttons are visible, so it never needs a width

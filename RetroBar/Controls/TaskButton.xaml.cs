@@ -180,6 +180,7 @@ namespace RetroBar.Controls
                 ? new SolidColorBrush(color.Value)
                 : Brushes.Transparent;
             var vis = color.HasValue ? Visibility.Visible : Visibility.Collapsed;
+            GroupTopSeparator.Visibility = vis;
             RemoveFromGroupMenuItem.Visibility = vis;
             RemoveGroupMenuItem.Visibility = vis;
             TileGroupMenuItem.Visibility = vis;
@@ -232,9 +233,9 @@ namespace RetroBar.Controls
 
         private void AppButton_OnContextMenuOpening(object sender, ContextMenuEventArgs e)
         {
-            ShellLogger.Debug($"TaskButton: ContextMenuOpening for {Window?.Title}");
+            ShellLogger.Debug($"TaskButton: ContextMenuOpening for {Window?.Title} grouped={Host?.GetGroupForWindow(Window) != null} tick={Environment.TickCount}");
             ShellFlyoutHelper.DismissIfActive();
-            ShellLogger.Debug($"TaskButton: DismissIfActive returned, proceeding with context menu");
+            ShellLogger.Debug($"TaskButton: DismissIfActive returned, proceeding with context menu tick={Environment.TickCount}");
 
             // The taskbar is WS_EX_NOACTIVATE, so opening the menu does not make us the foreground
             // window on its own, and if an elevated window was already foreground, clicking back into
@@ -256,7 +257,10 @@ namespace RetroBar.Controls
                 // Windows' keyboard-driven snap only goes down to quarters, so tiling tops out at
                 // groups of 4.
                 int groupSize = Host?.GetGroupWindows(Window)?.Count ?? 0;
-                TileGroupMenuItem.Visibility = groupSize <= 4 ? Visibility.Visible : Visibility.Collapsed;
+                var newTileVis = groupSize <= 4 ? Visibility.Visible : Visibility.Collapsed;
+                if (newTileVis != TileGroupMenuItem.Visibility)
+                    ShellLogger.Debug($"TaskButton: ContextMenuOpening for {Window?.Title} changing TileGroupMenuItem visibility after open, groupSize={groupSize}, this resizes the open menu and can look like a flicker");
+                TileGroupMenuItem.Visibility = newTileVis;
             }
 
             NativeMethods.WindowShowStyle wss = Window.ShowStyle;
@@ -598,7 +602,8 @@ namespace RetroBar.Controls
         private void ContextMenu_OpenedOrClosed(object sender, RoutedEventArgs e)
         {
             string eventName = e.RoutedEvent == ContextMenu.OpenedEvent ? "Opened" : "Closed";
-            // ShellLogger.Debug($"TaskButton: ContextMenu_{eventName} for {Window?.Title}, flyoutActive={ShellFlyoutHelper.IsShellFlyoutActive()}, stack={new StackTrace(true)}");
+            bool grouped = Host?.GetGroupForWindow(Window) != null;
+            ShellLogger.Debug($"TaskButton: ContextMenu_{eventName} for {Window?.Title} grouped={grouped} GroupTopSeparator.Visibility={GroupTopSeparator.Visibility} RemoveGroupMenuItem.Visibility={RemoveGroupMenuItem.Visibility} tick={Environment.TickCount}");
 
             BindingOperations.GetMultiBindingExpression(AppButton, StyleProperty).UpdateTarget();
 
@@ -660,10 +665,14 @@ namespace RetroBar.Controls
                 bool inside = IsPointInsideMenuCascade(pt);
                 if (!inside)
                 {
+                    ShellLogger.Debug($"TaskButton: OnContextMenuMouseEvent for {Window?.Title} closing menu, click at ({pt.X},{pt.Y}) was outside menu cascade, msg={args.Message} tick={Environment.TickCount}");
                     Dispatcher.BeginInvoke(() => { if (menu.IsOpen) menu.IsOpen = false; });
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                ShellLogger.Debug($"TaskButton: OnContextMenuMouseEvent for {Window?.Title} threw: {ex}");
+            }
         }
     }
 }
