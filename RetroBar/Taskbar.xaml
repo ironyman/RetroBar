@@ -1,4 +1,4 @@
-﻿<appbar:AppBarWindow x:Class="RetroBar.Taskbar"
+<appbar:AppBarWindow x:Class="RetroBar.Taskbar"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:controls="clr-namespace:RetroBar.Controls"
@@ -97,6 +97,8 @@
                         <Separator />
                         <MenuItem Header="Workspaces" Tag="workspace-switcher" />
                         <Separator Tag="workspace-sep" />
+                        <MenuItem Header="{DynamicResource recently_closed}" Tag="recently-closed" />
+                        <Separator Tag="recently-closed-sep" />
                         <!--StaticResourceExtension ResourceKey="ToolbarsItem" />
                         <Separator /-->
                         <StaticResourceExtension ResourceKey="SetTimeMenuItem" />
@@ -150,6 +152,8 @@
             <Separator />
             <MenuItem Header="Workspaces" Tag="workspace-switcher" />
             <Separator Tag="workspace-sep" />
+            <MenuItem Header="{DynamicResource recently_closed}" Tag="recently-closed" />
+            <Separator Tag="recently-closed-sep" />
             <MenuItem Header="{DynamicResource gather_all_windows}"
                       Click="GatherAllWindowsMenuItem_OnClick"
                       Tag="gather-all-windows" />
