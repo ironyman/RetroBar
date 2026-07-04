@@ -45,6 +45,7 @@
     <ProjectReference Include="..\ManagedShell\src\ManagedShell\ManagedShell.csproj" />
     <ProjectReference Include="..\ManagedShell\src\ManagedShell.AppBar\ManagedShell.AppBar.csproj" />
     <PackageReference Include="System.Net.Http.Json" Version="6.0.2" />
+    <PackageReference Include="System.Diagnostics.PerformanceCounter" Version="6.0.1" />
   </ItemGroup>
 
   <ItemGroup>
