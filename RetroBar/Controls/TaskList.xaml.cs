@@ -126,6 +126,7 @@ namespace RetroBar.Controls
                 // A collapsed group's hidden members can still become the active window (e.g. via
                 // Alt+Tab); track every window's State so the filter can be re-run and reveal it.
                 rawSource = taskbarItems?.SourceCollection as ObservableCollection<ApplicationWindow>;
+                _groupManager.SetSource(rawSource);
                 if (rawSource != null)
                 {
                     foreach (var w in rawSource)
@@ -142,9 +143,27 @@ namespace RetroBar.Controls
             }
         }
 
+        // A workspace switch removes then re-adds a whole batch of windows over several dispatcher
+        // cycles. Each of those Add/Removes would otherwise ease the row width and slide each button
+        // in - reading as a busy shuffle on every switch. Suppress both for a short quiet period
+        // that each batch event re-extends, so animations resume only once the switch has settled.
+        // Time-based (not tied to WorkspaceManager's pending-show set) so it can never get stuck on.
+        private const int SwitchAnimationQuietMs = 400;
+        private DateTime _suppressSwitchAnimationsUntil = DateTime.MinValue;
+        // Also honours WorkspaceManager.IsSwitching so the collapsed-group reveal fired when a
+        // re-activated member returns (which can land just after the last batch add) stays unanimated.
+        public bool SwitchAnimationInProgress =>
+            DateTime.UtcNow < _suppressSwitchAnimationsUntil || WorkspaceManager.Instance.IsSwitching;
+
         private void WorkspaceManager_WorkspaceSwitched(object sender, EventArgs e)
         {
-            Dispatcher.BeginInvoke((Action)(() => taskbarItems?.Refresh()));
+            _suppressSwitchAnimationsUntil = DateTime.UtcNow.AddMilliseconds(SwitchAnimationQuietMs);
+            _groupManager.LogGroups($"WorkspaceSwitched (workspace {WorkspaceManager.Instance.CurrentWorkspace}, before refresh)");
+            Dispatcher.BeginInvoke((Action)(() =>
+            {
+                taskbarItems?.Refresh();
+                _groupManager.LogGroups("WorkspaceSwitched (after refresh)");
+            }));
         }
 
         private static void TasksChangedCallback(DependencyObject sender, DependencyPropertyChangedEventArgs e)
@@ -214,9 +233,9 @@ namespace RetroBar.Controls
             if (activeWindow == null) return;
 
             var group = _groupManager.GetGroupForWindow(activeWindow);
-            if (group != null && group.Windows.Count > 1)
+            if (group != null && group.Handles.Count > 1)
             {
-                var ordered = _groupManager.GetGroupWindowsOrdered(activeWindow, rawSource);
+                var ordered = _groupManager.GetGroupWindowsOrdered(activeWindow);
                 int index = ordered.IndexOf(activeWindow);
                 if (index >= 0)
                 {
@@ -479,12 +498,21 @@ namespace RetroBar.Controls
 
             var source = taskbarItems?.SourceCollection as ObservableCollection<ApplicationWindow>;
             var representative = _groupManager.GetCollapsedRepresentative(group, source);
-            var others = group.Windows.Where(w => !ReferenceEquals(w, representative)).ToList();
+            var others = _groupManager.GetLiveWindows(group).Where(w => !ReferenceEquals(w, representative)).ToList();
             if (others.Count == 0) return;
 
             // All non-representative members share the same visibility, so any one of them stands
             // in for "is the group currently expanded".
             bool currentlyVisible = TasksList.ItemContainerGenerator.ContainerFromItem(others[0]) != null;
+
+            // During a workspace switch the group expands/collapses because its members are being
+            // restored/hidden, not because the user acted - reflect the new visibility with a plain
+            // refresh and no slide (MarkForReveal/AnimateHide would animate it).
+            if (SwitchAnimationInProgress)
+            {
+                taskbarItems?.Refresh();
+                return;
+            }
 
             if (_groupManager.GroupHasActiveWindow(group))
             {
@@ -539,7 +567,17 @@ namespace RetroBar.Controls
             // transient counts is what produced a spurious shrink/grow flash on every group drag.
             if (action != System.Collections.Specialized.NotifyCollectionChangedAction.Move)
             {
-                SetTaskButtonWidth(animate: true);
+                if (SwitchAnimationInProgress)
+                {
+                    // Keep the quiet period alive for the rest of this switch's batch, and snap the
+                    // width instead of easing it.
+                    _suppressSwitchAnimationsUntil = DateTime.UtcNow.AddMilliseconds(SwitchAnimationQuietMs);
+                    SetTaskButtonWidth(animate: false);
+                }
+                else
+                {
+                    SetTaskButtonWidth(animate: true);
+                }
             }
 
             // When a new window is inserted after its active parent (GroupAfterParent setting),
@@ -550,6 +588,14 @@ namespace RetroBar.Controls
                 if (e.NewItems != null)
                 {
                     var newWindows = e.NewItems.OfType<ApplicationWindow>().ToList();
+
+                    foreach (var w in newWindows)
+                    {
+                        var g = _groupManager.GetGroupForWindow(w);
+                        if (g != null)
+                            ShellLogger.Debug($"TaskList: grouped window (re)entered view: 0x{w.Handle.ToInt64():X} \"{w.Title}\" group={_groupManager.DescribeGroup(g)}");
+                    }
+
                     // Deferred so this runs after WPF's own ItemsControl has finished reacting to
                     // the Add notification — moving the collection again synchronously from inside
                     // this handler races the container generator and can leave the new button's
@@ -579,13 +625,12 @@ namespace RetroBar.Controls
 
                 foreach (var group in _groupManager.Groups)
                 {
-                    if (group.Windows.Count < 2) continue;
+                    if (group.Handles.Count < 2) continue;
 
                     int minIdx = int.MaxValue, maxIdx = -1;
-                    foreach (var w in group.Windows)
+                    for (int idx = 0; idx < source.Count; idx++)
                     {
-                        int idx = source.IndexOf(w);
-                        if (idx < 0) continue;
+                        if (!group.Handles.Contains(source[idx].Handle)) continue;
                         if (idx < minIdx) minIdx = idx;
                         if (idx > maxIdx) maxIdx = idx;
                     }
@@ -658,6 +703,15 @@ namespace RetroBar.Controls
                     .Where(w => !stillExists.Contains(w.Handle) && !WorkspaceManager.Instance.IsHiddenByUs(w.Handle))
                     .ToList();
 
+                // Log the classification of every grouped window leaving the filtered view, so a
+                // group being wrongly torn down (e.g. a workspace-hidden window misread as closed)
+                // is visible in the log.
+                foreach (var w in oldWindows)
+                {
+                    if (_groupManager.GetGroupForWindow(w) == null) continue;
+                    ShellLogger.Debug($"TaskList: grouped window left view ({action}): 0x{w.Handle.ToInt64():X} \"{w.Title}\" stillExists={stillExists.Contains(w.Handle)} hiddenByUs={WorkspaceManager.Instance.IsHiddenByUs(w.Handle)} ShowInTaskbar={w.ShowInTaskbar} genuinelyGone={genuinelyGone.Contains(w)}");
+                }
+
                 if (genuinelyGone.Count > 0)
                 {
                     bool anyWasGrouped = genuinelyGone.Any(w => _groupManager.GetGroupForWindow(w) != null);
@@ -685,6 +739,7 @@ namespace RetroBar.Controls
                 // from the source collection right now but aren't gone - keep their membership.
                 if (taskbarItems?.SourceCollection is System.Collections.IEnumerable src)
                 {
+                    ShellLogger.Debug("TaskList: view Reset - reconciling groups with source");
                     changed = _groupManager.ReconcileWithSource(src.OfType<ApplicationWindow>(), WorkspaceManager.Instance.IsHiddenByUs);
                 }
             }
@@ -982,10 +1037,10 @@ namespace RetroBar.Controls
         // Called from TaskButton right-click -> Tile group.
         public async void TileGroup(ApplicationWindow window)
         {
-            var windows = _groupManager.GetGroupWindowsOrdered(window, taskbarItems?.SourceCollection as ObservableCollection<ApplicationWindow>);
+            var windows = _groupManager.GetGroupWindowsOrdered(window);
             var group = _groupManager.GetGroupForWindow(window);
             await WindowTiler.TileGroupAsync(windows);
-            if (group != null && group.Windows.Count >= 2 && group.Windows.Count <= 4)
+            if (group != null && windows.Count >= 2 && windows.Count <= 4)
                 group.SetTiledRects(windows);
         }
 
@@ -1041,7 +1096,7 @@ namespace RetroBar.Controls
                     if (_groupManager.GroupHasActiveWindow(group)) continue;
 
                     var representative = _groupManager.GetCollapsedRepresentative(group, source);
-                    toHide.AddRange(group.Windows.Where(w => !ReferenceEquals(w, representative)));
+                    toHide.AddRange(_groupManager.GetLiveWindows(group).Where(w => !ReferenceEquals(w, representative)));
                 }
             }
 
@@ -1340,7 +1395,7 @@ namespace RetroBar.Controls
             // its members together). But an active window forces the group to render fully expanded
             // (see Tasks_Filter) - in that case every member is its own visible button, same as an
             // uncollapsed group, so solo drag is meaningful and must not be suppressed.
-            if (soloDrag && draggedGroup != null && draggedGroup.IsCollapsed && draggedGroup.Windows.Count > 1
+            if (soloDrag && draggedGroup != null && draggedGroup.IsCollapsed && draggedGroup.Handles.Count > 1
                 && !_groupManager.GroupHasActiveWindow(draggedGroup))
                 soloDrag = false;
 
@@ -1348,12 +1403,12 @@ namespace RetroBar.Controls
             _dragIsSolo = soloDrag;
             _dragSoloOriginalGroup = soloDrag ? draggedGroup : null;
 
-            if (!soloDrag && draggedGroup != null && draggedGroup.Windows.Count > 1)
+            if (!soloDrag && draggedGroup != null && draggedGroup.Handles.Count > 1)
             {
                 for (int i = 0; i < _dragContainers.Count; i++)
                 {
                     if (i == _dragFromIndex) continue;
-                    if (_dragContainers[i].DataContext is ApplicationWindow w && draggedGroup.Windows.Contains(w))
+                    if (_dragContainers[i].DataContext is ApplicationWindow w && draggedGroup.Handles.Contains(w.Handle))
                     {
                         _dragGroupMemberIndices.Add(i);
                         Panel.SetZIndex(_dragContainers[i], 99);
@@ -1583,7 +1638,7 @@ namespace RetroBar.Controls
                     for (int i = 0; i < _dragContainers.Count; i++)
                     {
                         if (i == _dragFromIndex) continue;
-                        if (_dragContainers[i].DataContext is not ApplicationWindow w || !_dragSoloOriginalGroup.Windows.Contains(w))
+                        if (_dragContainers[i].DataContext is not ApplicationWindow w || !_dragSoloOriginalGroup.Handles.Contains(w.Handle))
                             continue;
                         if (OverlapFraction(draggedRect, GetSlotRect(i), horizontal) >= 0.25f)
                         {
@@ -1877,17 +1932,13 @@ namespace RetroBar.Controls
             {
                 foreach (var group in _groupManager.Groups.ToList())
                 {
-                    if (!group.IsCollapsed || group.Windows.Count <= 1
+                    if (!group.IsCollapsed || group.Handles.Count <= 1
                         || _groupManager.GroupHasActiveWindow(group))
                         continue;
 
                     // Members in current source order (the representative is leftmost, so first).
-                    var members = group.Windows
-                        .Select(w => (w, idx: source.IndexOf(w)))
-                        .Where(x => x.idx >= 0)
-                        .OrderBy(x => x.idx)
-                        .Select(x => x.w)
-                        .ToList();
+                    // GetLiveWindows walks the source in order, so this is already sorted by index.
+                    var members = _groupManager.GetLiveWindows(group);
 
                     for (int i = 1; i < members.Count; i++)
                     {

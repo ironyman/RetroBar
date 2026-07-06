@@ -12,7 +12,14 @@ namespace RetroBar.Utilities
 
         public Color GroupColor { get; set; }
         public bool IsCollapsed { get; set; }
-        public List<ApplicationWindow> Windows { get; } = new List<ApplicationWindow>();
+
+        // Membership is tracked by HWND, not by ApplicationWindow instance: a window hidden for a
+        // workspace switch is treated as destroyed by the shell (its ApplicationWindow is disposed
+        // and dropped from the collection) and comes back as a brand-new instance when re-shown.
+        // The HWND is the only identity that survives that round trip, so holding instances here
+        // would leave the group full of stale, dead objects after every workspace switch. Live
+        // instances are resolved on demand via TaskGroupManager.
+        public List<IntPtr> Handles { get; } = new List<IntPtr>();
 
         // Whether this group was tiled via Aero Snap. Cleared when any member window
         // moves away from its expected tile position.
@@ -48,11 +55,11 @@ namespace RetroBar.Utilities
                 return false;
 
             NativeMethods.Rect actual = new NativeMethods.Rect();
-            foreach (var w in Windows)
+            foreach (var h in Handles)
             {
-                if (!_tileRects.TryGetValue(w.Handle, out var expected))
+                if (!_tileRects.TryGetValue(h, out var expected))
                     return false;
-                if (!NativeMethods.GetWindowRect(w.Handle, out actual))
+                if (!NativeMethods.GetWindowRect(h, out actual))
                     return false;
                 if (actual.Left != expected.Left || actual.Top != expected.Top
                     || actual.Right != expected.Right || actual.Bottom != expected.Bottom)

@@ -1,3 +1,4 @@
+using ManagedShell.Common.Logging;
 using ManagedShell.WindowsTasks;
 using RetroBar.Utilities;
 using System;
@@ -28,6 +29,7 @@ namespace RetroBar.Controls
         private bool _groupHoverConfirmed;
         private TaskGroup _provisionalGroup;
         private DispatcherTimer _desktopSplitTimer;
+        private ObservableCollection<ApplicationWindow> _source;
 
         public TaskGroupManager(ItemsControl tasksList, Dispatcher dispatcher)
         {
@@ -35,12 +37,75 @@ namespace RetroBar.Controls
             _dispatcher = dispatcher;
         }
 
+        // Groups track membership by HWND (see TaskGroup.Handles); this is the collection live
+        // ApplicationWindow instances are resolved from.
+        public void SetSource(ObservableCollection<ApplicationWindow> source)
+        {
+            _source = source;
+        }
+
         public IReadOnlyList<TaskGroup> Groups => _taskGroups;
         public bool HoverConfirmed => _groupHoverConfirmed;
         public int HoverTargetIndex => _groupHoverTargetIndex;
 
         public TaskGroup GetGroupForWindow(ApplicationWindow window)
-            => _taskGroups.FirstOrDefault(g => g.Windows.Contains(window));
+            => window == null ? null : GetGroupForHandle(window.Handle);
+
+        public TaskGroup GetGroupForHandle(IntPtr handle)
+            => _taskGroups.FirstOrDefault(g => g.Handles.Contains(handle));
+
+        // The live instance currently in the source collection for the given HWND, or null if the
+        // window is absent right now (hidden on another workspace, or genuinely gone).
+        private ApplicationWindow ResolveWindow(IntPtr handle)
+            => _source?.FirstOrDefault(w => w.Handle == handle);
+
+        // The group's members that currently exist in the source collection, as live instances.
+        // Members hidden on another workspace resolve to nothing and are omitted.
+        public List<ApplicationWindow> GetLiveWindows(TaskGroup group)
+        {
+            var result = new List<ApplicationWindow>();
+            if (_source == null) return result;
+
+            foreach (var w in _source)
+            {
+                if (group.Handles.Contains(w.Handle))
+                    result.Add(w);
+            }
+            return result;
+        }
+
+        private static int IndexOfHandle(ObservableCollection<ApplicationWindow> source, IntPtr handle)
+        {
+            for (int i = 0; i < source.Count; i++)
+            {
+                if (source[i].Handle == handle)
+                    return i;
+            }
+            return -1;
+        }
+
+        // One-line description of a group for diagnostics: each member's hwnd plus whether it
+        // currently resolves to a live instance (and its title if so).
+        public string DescribeGroup(TaskGroup group)
+        {
+            var members = group.Handles.Select(h =>
+            {
+                var w = ResolveWindow(h);
+                return w == null
+                    ? $"0x{h.ToInt64():X}=<not live>"
+                    : $"0x{h.ToInt64():X}=\"{w.Title}\"";
+            });
+            return $"[collapsed={group.IsCollapsed} members({group.Handles.Count}): {string.Join(", ", members)}]";
+        }
+
+        // Dumps every group's membership - called around workspace switches to diagnose groups
+        // getting lost.
+        public void LogGroups(string context)
+        {
+            ShellLogger.Debug($"TaskGroupManager: {context}: {_taskGroups.Count} group(s)");
+            foreach (var g in _taskGroups)
+                ShellLogger.Debug($"TaskGroupManager:   {DescribeGroup(g)}");
+        }
 
         // internal so TaskList can look up a group member's button to run slide animations.
         internal static TaskButton GetTaskButton(ContentPresenter cp)
@@ -70,7 +135,7 @@ namespace RetroBar.Controls
                     continue;
                 }
 
-                if (_provisionalGroup?.Windows.Contains(window) == true)
+                if (_provisionalGroup?.Handles.Contains(window.Handle) == true)
                 {
                     btn.SetGroupColor(_provisionalGroup.GroupColor);
                     continue;
@@ -95,7 +160,7 @@ namespace RetroBar.Controls
             var group = GetGroupForWindow(window);
             if (group != null)
                 btn.SetGroupColor(group.GroupColor);
-            else if (_provisionalGroup?.Windows.Contains(window) == true)
+            else if (_provisionalGroup?.Handles.Contains(window.Handle) == true)
                 btn.SetGroupColor(_provisionalGroup.GroupColor);
             else
                 btn.SetGroupColor(null);
@@ -107,16 +172,17 @@ namespace RetroBar.Controls
             var group = GetGroupForWindow(window);
             if (group == null) return;
 
-            group.Windows.Remove(window);
+            ShellLogger.Debug($"TaskGroupManager: UngroupWindow 0x{window.Handle.ToInt64():X} \"{window.Title}\" from {DescribeGroup(group)}");
+            group.Handles.Remove(window.Handle);
 
             if (source != null)
             {
                 int windowPos = source.IndexOf(window);
-                if (windowPos >= 0 && group.Windows.Count > 0)
+                if (windowPos >= 0 && group.Handles.Count > 0)
                 {
                     // Find the span of remaining group members in collection order.
-                    var groupPositions = group.Windows
-                        .Select(w => source.IndexOf(w))
+                    var groupPositions = group.Handles
+                        .Select(h => IndexOfHandle(source, h))
                         .Where(idx => idx >= 0)
                         .OrderBy(idx => idx)
                         .ToList();
@@ -161,7 +227,7 @@ namespace RetroBar.Controls
                 }
             }
 
-            if (group.Windows.Count <= 1)
+            if (group.Handles.Count <= 1)
                 _taskGroups.Remove(group);
 
             UpdateGroupVisuals();
@@ -181,32 +247,31 @@ namespace RetroBar.Controls
             if (window == null) return;
             var group = GetGroupForWindow(window);
             if (group == null) return;
+            ShellLogger.Debug($"TaskGroupManager: RemoveGroup via 0x{window.Handle.ToInt64():X} \"{window.Title}\": {DescribeGroup(group)}");
             group.ClearTiled();
             _taskGroups.Remove(group);
             UpdateGroupVisuals();
         }
 
-        // Returns the windows belonging to the same group as the given window.
+        // Returns the live windows belonging to the same group as the given window. Members
+        // currently hidden on another workspace have no live instance and are omitted.
         public List<ApplicationWindow> GetGroupWindows(ApplicationWindow window)
         {
             var group = GetGroupForWindow(window);
             if (group == null) return new List<ApplicationWindow> { window };
-            return new List<ApplicationWindow>(group.Windows);
+            return GetLiveWindows(group);
         }
 
         // Same as GetGroupWindows, but ordered by each window's position in the taskbar so
         // callers (e.g. tiling) can assign positions left-to-right consistently.
-        public List<ApplicationWindow> GetGroupWindowsOrdered(ApplicationWindow window, ObservableCollection<ApplicationWindow> source)
+        public List<ApplicationWindow> GetGroupWindowsOrdered(ApplicationWindow window)
         {
             var group = GetGroupForWindow(window);
             if (group == null) return new List<ApplicationWindow> { window };
-            if (source == null) return new List<ApplicationWindow>(group.Windows);
 
-            return group.Windows
-                .Select(w => (window: w, index: source.IndexOf(w)))
-                .OrderBy(x => x.index)
-                .Select(x => x.window)
-                .ToList();
+            // GetLiveWindows walks the source collection in order, so the result is already
+            // sorted by taskbar position.
+            return GetLiveWindows(group);
         }
 
         public void CollapseGroup(ApplicationWindow window)
@@ -222,20 +287,22 @@ namespace RetroBar.Controls
         // would hide the very button the user is currently working with, so leave the whole group
         // expanded until none of its windows is active anymore.
         public bool GroupHasActiveWindow(TaskGroup group)
-            => group.Windows.Any(w => w.State == ApplicationWindow.WindowState.Active);
+            => GetLiveWindows(group).Any(w => w.State == ApplicationWindow.WindowState.Active);
 
-        // The single visible button for a collapsed group: whichever member sits leftmost
-        // (earliest) in the underlying source collection.
+        // The single visible button for a collapsed group: whichever live member sits leftmost
+        // (earliest) in the underlying source collection. Always a live instance from the
+        // collection (callers compare it by reference against filter candidates), or null when no
+        // member is currently present at all (e.g. the whole group is on another workspace).
         public ApplicationWindow GetCollapsedRepresentative(TaskGroup group, ObservableCollection<ApplicationWindow> source)
         {
-            if (source == null) return group.Windows.FirstOrDefault();
+            if (source == null) return group.Handles.Select(ResolveWindow).FirstOrDefault(w => w != null);
 
-            return group.Windows
-                .Select(w => (window: w, index: source.IndexOf(w)))
-                .Where(x => x.index >= 0)
-                .OrderBy(x => x.index)
-                .Select(x => x.window)
-                .FirstOrDefault() ?? group.Windows.FirstOrDefault();
+            foreach (var w in source)
+            {
+                if (group.Handles.Contains(w.Handle))
+                    return w;
+            }
+            return null;
         }
 
         public void CollapseAllGroups()
@@ -261,36 +328,40 @@ namespace RetroBar.Controls
             {
                 var group = GetGroupForWindow(window);
                 if (group == null) continue;
-                group.Windows.Remove(window);
+                ShellLogger.Debug($"TaskGroupManager: RemoveWindows removing 0x{window.Handle.ToInt64():X} \"{window.Title}\" from {DescribeGroup(group)}");
+                group.Handles.Remove(window.Handle);
                 group.ClearTiled();
-                if (group.Windows.Count <= 1)
+                if (group.Handles.Count <= 1)
+                {
+                    ShellLogger.Debug($"TaskGroupManager: RemoveWindows dissolving group left with {group.Handles.Count} member(s)");
                     _taskGroups.Remove(group);
+                }
                 changed = true;
             }
             return changed;
         }
 
         // Dissolves group membership for any window no longer present in the source collection.
-        // Used when the source collection reports a full Reset. remainingWindows is keyed by
-        // Handle (ApplicationWindow only overrides Equals, not GetHashCode, so hashing by the
-        // object itself would silently misbehave across instances for the same window).
-        // keepHidden lets a caller preserve membership for windows that are legitimately absent
-        // from the source collection right now (e.g. hidden by WorkspaceManager for being on
-        // another workspace) rather than genuinely gone.
+        // Used when the source collection reports a full Reset. keepHidden lets a caller preserve
+        // membership for windows that are legitimately absent from the source collection right now
+        // (e.g. hidden by WorkspaceManager for being on another workspace) rather than genuinely gone.
         public bool ReconcileWithSource(IEnumerable<ApplicationWindow> remainingWindows, Func<IntPtr, bool> keepHidden = null)
         {
             bool changed = false;
             var remaining = new HashSet<IntPtr>(remainingWindows.Select(w => w.Handle));
             foreach (var g in _taskGroups.ToList())
             {
-                int removedCount = g.Windows.RemoveAll(w => !remaining.Contains(w.Handle) && keepHidden?.Invoke(w.Handle) != true);
-                if (removedCount > 0)
+                var removedHandles = g.Handles.Where(h => !remaining.Contains(h) && keepHidden?.Invoke(h) != true).ToList();
+                if (removedHandles.Count > 0)
                 {
+                    ShellLogger.Debug($"TaskGroupManager: ReconcileWithSource removing {string.Join(", ", removedHandles.Select(h => $"0x{h.ToInt64():X}"))} from {DescribeGroup(g)}");
+                    g.Handles.RemoveAll(removedHandles.Contains);
                     g.ClearTiled();
                     changed = true;
                 }
-                if (g.Windows.Count <= 1)
+                if (g.Handles.Count <= 1)
                 {
+                    ShellLogger.Debug($"TaskGroupManager: ReconcileWithSource dissolving group left with {g.Handles.Count} member(s): {DescribeGroup(g)}");
                     _taskGroups.Remove(g);
                     changed = true;
                 }
@@ -320,14 +391,19 @@ namespace RetroBar.Controls
         // since the user's action (moving one window) only affected that window, not its
         // groupmates. A group where every member is invisible together (its whole desktop was
         // switched away from) is left untouched; it resurfaces intact once that desktop returns.
+        // Only live members are considered: a member with no instance at all (hidden by our own
+        // WorkspaceManager) is on another workspace, not another virtual desktop, and must not
+        // trigger a split.
         private void CheckForDesktopSplits(ObservableCollection<ApplicationWindow> source)
         {
             foreach (var group in _taskGroups.ToList())
             {
-                var invisible = group.Windows.Where(w => !w.ShowInTaskbar).ToList();
-                if (invisible.Count == 0 || invisible.Count == group.Windows.Count)
+                var live = GetLiveWindows(group);
+                var invisible = live.Where(w => !w.ShowInTaskbar).ToList();
+                if (invisible.Count == 0 || invisible.Count == live.Count)
                     continue;
 
+                ShellLogger.Debug($"TaskGroupManager: CheckForDesktopSplits ungrouping {invisible.Count} invisible of {live.Count} live member(s) in {DescribeGroup(group)}");
                 foreach (var w in invisible)
                     UngroupWindow(w, source);
             }
@@ -382,19 +458,19 @@ namespace RetroBar.Controls
 
             // Merge both sides into the provisional display set.
             if (draggedGroup != null)
-                foreach (var w in draggedGroup.Windows) _provisionalGroup.Windows.Add(w);
+                foreach (var h in draggedGroup.Handles) _provisionalGroup.Handles.Add(h);
             else
-                _provisionalGroup.Windows.Add(draggedWindow);
+                _provisionalGroup.Handles.Add(draggedWindow.Handle);
 
             if (targetGroup != null)
             {
-                foreach (var w in targetGroup.Windows)
-                    if (!_provisionalGroup.Windows.Contains(w)) _provisionalGroup.Windows.Add(w);
+                foreach (var h in targetGroup.Handles)
+                    if (!_provisionalGroup.Handles.Contains(h)) _provisionalGroup.Handles.Add(h);
             }
             else
             {
-                if (!_provisionalGroup.Windows.Contains(targetWindow))
-                    _provisionalGroup.Windows.Add(targetWindow);
+                if (!_provisionalGroup.Handles.Contains(targetWindow.Handle))
+                    _provisionalGroup.Handles.Add(targetWindow.Handle);
             }
 
             _groupHoverConfirmed = true;
@@ -409,22 +485,23 @@ namespace RetroBar.Controls
 
             // Collect old groups that contain any provisional member.
             var oldGroups = new HashSet<TaskGroup>();
-            foreach (var w in _provisionalGroup.Windows)
+            foreach (var h in _provisionalGroup.Handles)
             {
-                var g = GetGroupForWindow(w);
+                var g = GetGroupForHandle(h);
                 if (g != null) oldGroups.Add(g);
             }
 
             // Strip those windows from their old groups (may dissolve them).
             foreach (var g in oldGroups)
             {
-                g.Windows.RemoveAll(w => _provisionalGroup.Windows.Contains(w));
+                g.Handles.RemoveAll(h => _provisionalGroup.Handles.Contains(h));
                 g.ClearTiled();
-                if (g.Windows.Count <= 1)
+                if (g.Handles.Count <= 1)
                     _taskGroups.Remove(g);
             }
 
             // The provisional object becomes the committed group.
+            ShellLogger.Debug($"TaskGroupManager: CommitProvisionalGroup {DescribeGroup(_provisionalGroup)}");
             _taskGroups.Add(_provisionalGroup);
             _provisionalGroup = null;
             _groupHoverConfirmed = false;
@@ -439,13 +516,14 @@ namespace RetroBar.Controls
         public void ResolveSoloGroupDrag(ApplicationWindow window, TaskGroup originalGroup, bool stillInGroup)
         {
             if (window == null || originalGroup == null) return;
-            if (!_taskGroups.Contains(originalGroup) || !originalGroup.Windows.Contains(window)) return;
+            if (!_taskGroups.Contains(originalGroup) || !originalGroup.Handles.Contains(window.Handle)) return;
 
             if (!stillInGroup)
             {
-                originalGroup.Windows.Remove(window);
+                ShellLogger.Debug($"TaskGroupManager: ResolveSoloGroupDrag removing 0x{window.Handle.ToInt64():X} \"{window.Title}\" from {DescribeGroup(originalGroup)}");
+                originalGroup.Handles.Remove(window.Handle);
                 originalGroup.ClearTiled();
-                if (originalGroup.Windows.Count <= 1)
+                if (originalGroup.Handles.Count <= 1)
                     _taskGroups.Remove(originalGroup);
             }
 

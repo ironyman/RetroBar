@@ -134,9 +134,14 @@ namespace RetroBar.Controls
             // A reveal caused by expanding/uncollapsing a group or removing a window from a
             // collapsed group always slides in, regardless of the general new-window setting -
             // but a width slide only reads correctly on a horizontal taskbar either way.
+            // (ConsumeRevealAnimation still runs even when suppressed, to clear the pending flag.)
             bool forceSlideIn = Host?.ConsumeRevealAnimation(Window) == true && Settings.Instance.AnimateTaskbarLayout;
 
-            if (Host?.Host?.Orientation == Orientation.Horizontal && (forceSlideIn || Settings.Instance.SlideTaskbarButtons))
+            // Buttons re-appearing as part of a workspace switch shouldn't slide in - that's just
+            // the workspace restoring, not the user opening a window.
+            bool suppressForSwitch = Host?.SwitchAnimationInProgress == true;
+
+            if (!suppressForSwitch && Host?.Host?.Orientation == Orientation.Horizontal && (forceSlideIn || Settings.Instance.SlideTaskbarButtons))
             {
                 Animate();
             }
@@ -492,13 +497,13 @@ namespace RetroBar.Controls
             if (Window == null) return;
 
             var group = Host?.GetGroupForWindow(Window);
-            if (group != null && group.IsTiled && group.Windows.Count > 1)
+            if (group != null && group.IsTiled && group.Handles.Count > 1)
             {
                 if (group.AreAllWindowsStillTiled())
                 {
                     // Group is still tiled: bring all members to foreground, then
                     // activate the clicked one specifically.
-                    foreach (var w in group.Windows)
+                    foreach (var w in Host.GetGroupWindows(Window))
                         w.BringToFront();
                     Window.BringToFront();
                 }

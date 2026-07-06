@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
+using System.ComponentModel;
 using System.Linq;
 using System.Text;
 using ManagedShell.Common.Logging;
@@ -17,6 +18,43 @@ namespace RetroBar.Utilities
         private int _currentWorkspace = 1;
         private readonly Dictionary<IntPtr, int> _windowWorkspaces = new();
         private readonly HashSet<IntPtr> _hiddenByUs = new();
+
+        // Windows we've called ShowWindow on but that the shell hasn't re-added to the collection
+        // yet. ShowWindow -> HSHELL_WINDOWCREATED -> Windows.Add is asynchronous; during that gap
+        // the window is in neither the collection nor (if we cleared it eagerly) _hiddenByUs, so
+        // anything classifying windows during the gap (TaskGroupManager.ReconcileWithSource on a
+        // view Reset, TaskList's genuinely-gone check) would misread it as closed and e.g. dissolve
+        // its task group. So a window stays in _hiddenByUs until its re-add actually lands; this
+        // set tracks which ones are in that in-flight state.
+        private readonly HashSet<IntPtr> _pendingShow = new();
+
+        // Per-workspace memory of which window was foreground when we last left that workspace, so
+        // switching back can restore focus to it instead of letting Windows pick (which lands on
+        // whatever ends up topmost after the batch re-show - usually not the window the user left).
+        private readonly Dictionary<int, IntPtr> _lastActiveByWorkspace = new();
+
+        // The window to re-activate once the workspace we're switching TO finishes restoring.
+        // Activation waits for the window's re-add (it isn't back in the collection synchronously);
+        // cleared once activated, or superseded when a newer switch starts.
+        private IntPtr _pendingActivate = IntPtr.Zero;
+
+        // While we're hiding/showing windows for a workspace switch, Windows fires a cascade of
+        // incidental WINDOWACTIVATED events (hiding the foreground window activates the next one in
+        // Z-order, which we then hide too, and so on). Those aren't the user choosing a window, so
+        // they must not overwrite _lastActiveByWorkspace - otherwise a workspace's remembered focus
+        // becomes "last window hidden" instead of the window the user actually left active. Each
+        // hide/show bumps this deadline; activation tracking is ignored until it passes.
+        private const int ActivationSuppressMs = 500;
+        private DateTime _suppressActivationTrackingUntil = DateTime.MinValue;
+        private bool ActivationTrackingSuppressed => DateTime.UtcNow < _suppressActivationTrackingUntil;
+        private void BumpActivationSuppression() => _suppressActivationTrackingUntil = DateTime.UtcNow.AddMilliseconds(ActivationSuppressMs);
+
+        // True from the moment a switch starts hiding/showing windows until ~ActivationSuppressMs
+        // after the last one. The taskbar uses this to also suppress button animations for the
+        // whole switch, including the collapsed-group reveal that a re-activated member triggers
+        // slightly after its window re-adds.
+        public bool IsSwitching => ActivationTrackingSuppressed;
+
         private readonly HashSet<IntPtr> _pinnedWindows = new();
         private readonly Dictionary<IntPtr, bool> _elevationCache = new();
         private ObservableCollection<ApplicationWindow> _windows;
@@ -45,10 +83,44 @@ namespace RetroBar.Utilities
                 if (!_windowWorkspaces.ContainsKey(w.Handle))
                     _windowWorkspaces[w.Handle] = _currentWorkspace;
                 initialOrder.Add(w.Handle);
+                TrackActivation(w);
+                if (w.State == ApplicationWindow.WindowState.Active)
+                    _lastActiveByWorkspace[_currentWorkspace] = w.Handle;
             }
             _workspaceOrder[_currentWorkspace] = initialOrder;
 
             _windows.CollectionChanged += Windows_CollectionChanged;
+        }
+
+        // Continuously remember, per workspace, the most recently activated window - so a later
+        // switch back to that workspace can restore focus to it. Tracked on activation (not
+        // snapshotted at switch time) so it's correct regardless of how the switch is triggered:
+        // a global hotkey leaves the app window active, but clicking a taskbar workspace button can
+        // move focus to the taskbar first, at which point no app window reads as active anymore.
+        private void TrackActivation(ApplicationWindow w)
+        {
+            w.PropertyChanged -= Window_PropertyChanged;
+            w.PropertyChanged += Window_PropertyChanged;
+        }
+
+        private void Window_PropertyChanged(object sender, PropertyChangedEventArgs e)
+        {
+            if (e.PropertyName != nameof(ApplicationWindow.State) || sender is not ApplicationWindow w)
+                return;
+
+            if (w.State != ApplicationWindow.WindowState.Active)
+                return;
+
+            // Ignore activations that are just fallout from our own hide/show during a switch.
+            if (ActivationTrackingSuppressed)
+            {
+                ShellLogger.Debug($"WorkspaceManager: ignoring incidental activation of 0x{w.Handle.ToInt64():X} \"{w.Title}\" during switch");
+                return;
+            }
+
+            int ws = GetWindowWorkspace(w.Handle);
+            _lastActiveByWorkspace[ws] = w.Handle;
+            ShellLogger.Debug($"WorkspaceManager: SAVED last-active for workspace {ws}: 0x{w.Handle.ToInt64():X} \"{w.Title}\"");
         }
 
         private void Windows_CollectionChanged(object sender, NotifyCollectionChangedEventArgs e)
@@ -57,6 +129,22 @@ namespace RetroBar.Utilities
             {
                 foreach (ApplicationWindow w in e.NewItems)
                 {
+                    TrackActivation(w);
+
+                    // A re-show we issued has landed: only now does the window stop counting as
+                    // hidden-by-us (see _pendingShow). If the user switched workspaces again while
+                    // the show was still in flight, it no longer belongs here - hide it right back.
+                    if (_pendingShow.Remove(w.Handle))
+                    {
+                        if (GetWindowWorkspace(w.Handle) != _currentWorkspace && !IsPinned(w.Handle))
+                        {
+                            ShellLogger.Debug($"WorkspaceManager: re-show of 0x{w.Handle.ToInt64():X} landed after another switch - hiding it again");
+                            SetWindowVisible(w.Handle, false);
+                            continue;
+                        }
+                        _hiddenByUs.Remove(w.Handle);
+                    }
+
                     if (!_windowWorkspaces.ContainsKey(w.Handle))
                         _windowWorkspaces[w.Handle] = _currentWorkspace;
 
@@ -66,12 +154,28 @@ namespace RetroBar.Utilities
                     var order = GetOrCreateWorkspaceOrder(_currentWorkspace);
                     if (!order.Contains(w.Handle))
                         order.Add(w.Handle);
+
+                    // The window we want focused after this switch has finished restoring just came
+                    // back - activate it now that a real (fresh) instance exists. Other members of
+                    // the batch are shown without activation, so this foreground choice sticks.
+                    if (w.Handle == _pendingActivate)
+                    {
+                        _pendingActivate = IntPtr.Zero;
+                        w.BringToFront();
+                        ShellLogger.Debug($"WorkspaceManager: activated 0x{w.Handle.ToInt64():X} \"{w.Title}\" on re-add; foreground now 0x{GetForegroundWindow().ToInt64():X}");
+                    }
                 }
             }
             else if (e.Action == NotifyCollectionChangedAction.Remove && e.OldItems != null)
             {
                 foreach (ApplicationWindow w in e.OldItems)
                 {
+                    // This ApplicationWindow instance is being discarded (the shell disposes it on
+                    // removal, hidden or closed); drop our activation subscription. A window that's
+                    // only hidden keeps its recorded _lastActiveByWorkspace entry and gets a fresh
+                    // instance (re-tracked) when it returns.
+                    w.PropertyChanged -= Window_PropertyChanged;
+
                     // Hiding a window makes the OS fire HSHELL_WINDOWDESTROYED, so the shell
                     // removes it from the collection exactly as if it had closed. If we're the
                     // ones who hid it, the window still exists — keep its workspace assignment
@@ -84,6 +188,7 @@ namespace RetroBar.Utilities
                     _windowWorkspaces.Remove(w.Handle);
                     _pinnedWindows.Remove(w.Handle);
                     _elevationCache.Remove(w.Handle);
+                    ForgetLastActive(w.Handle);
 
                     if (_workspaceOrder.TryGetValue(workspace, out var order))
                         order.Remove(w.Handle);
@@ -124,6 +229,8 @@ namespace RetroBar.Utilities
 
             foreach (var order in _workspaceOrder.Values)
                 order.RemoveAll(h => !live.Contains(h) && !_hiddenByUs.Contains(h));
+
+            _pendingShow.RemoveWhere(h => !IsWindow(h));
         }
 
         private List<IntPtr> GetOrCreateWorkspaceOrder(int workspace)
@@ -165,6 +272,79 @@ namespace RetroBar.Utilities
             ShowWindow(hwnd, visible ? WindowShowStyle.ShowNoActivate : WindowShowStyle.Hide);
         }
 
+        // Re-shows a window we previously hid. The hwnd deliberately stays in _hiddenByUs until
+        // the shell actually re-adds it (see _pendingShow); Windows_CollectionChanged completes
+        // the handoff. Returns true if a show was issued.
+        private bool ShowHiddenWindow(IntPtr hwnd)
+        {
+            if (!_hiddenByUs.Contains(hwnd)) return false;
+
+            if (!IsWindow(hwnd))
+            {
+                // closed while hidden — forget it
+                _hiddenByUs.Remove(hwnd);
+                _pendingShow.Remove(hwnd);
+                _windowWorkspaces.Remove(hwnd);
+                return false;
+            }
+
+            _pendingShow.Add(hwnd);
+            BumpActivationSuppression();
+            SetWindowVisible(hwnd, true);
+            return true;
+        }
+
+        // Hides a window, cancelling any in-flight re-show for it (rapid workspace switching can
+        // hide a window again before its previous show has landed).
+        private void HideWindow(IntPtr hwnd)
+        {
+            bool wasPending = _pendingShow.Remove(hwnd);
+            if (_hiddenByUs.Add(hwnd) || wasPending)
+            {
+                BumpActivationSuppression();
+                SetWindowVisible(hwnd, false);
+            }
+        }
+
+        // Forgets a window as any workspace's last-active - called when it's genuinely closed so
+        // switching back never tries to focus a dead handle.
+        private void ForgetLastActive(IntPtr hwnd)
+        {
+            if (_pendingActivate == hwnd) _pendingActivate = IntPtr.Zero;
+            foreach (var ws in _lastActiveByWorkspace.Where(kvp => kvp.Value == hwnd).Select(kvp => kvp.Key).ToList())
+                _lastActiveByWorkspace.Remove(ws);
+        }
+
+        // Safety net for _pendingShow: normally an entry is cleared when the shell re-adds the
+        // window (Windows_CollectionChanged). But if a ShowWindow produced no re-add - e.g. the
+        // window was already visible, or is no longer taskbar-eligible - the entry would linger,
+        // and with it a stale _hiddenByUs entry (inflating GetWorkspaceWindowCount and pinning
+        // group membership across resets). Run at each switch so staleness is bounded to one
+        // switch: complete the handoff for windows that are actually visible now, and drop dead
+        // handles outright. (Note: the window is genuinely on-screen either way - a lingering
+        // entry never means a window stuck invisible, only bookkeeping drift.)
+        private void DrainStalePendingShows()
+        {
+            foreach (var hwnd in _pendingShow.ToList())
+            {
+                if (!IsWindow(hwnd))
+                {
+                    _pendingShow.Remove(hwnd);
+                    _hiddenByUs.Remove(hwnd);
+                    _windowWorkspaces.Remove(hwnd);
+                    ForgetLastActive(hwnd);
+                    ShellLogger.Debug($"WorkspaceManager: DrainStalePendingShows dropped dead in-flight show 0x{hwnd.ToInt64():X}");
+                }
+                else if (IsWindowVisible(hwnd))
+                {
+                    _pendingShow.Remove(hwnd);
+                    if (GetWindowWorkspace(hwnd) == _currentWorkspace || IsPinned(hwnd))
+                        _hiddenByUs.Remove(hwnd);
+                    ShellLogger.Debug($"WorkspaceManager: DrainStalePendingShows completed handoff for already-visible 0x{hwnd.ToInt64():X}");
+                }
+            }
+        }
+
         public int GetWindowWorkspace(IntPtr hwnd)
         {
             return _windowWorkspaces.TryGetValue(hwnd, out int ws) ? ws : 1;
@@ -197,15 +377,15 @@ namespace RetroBar.Utilities
 
             if (pinned)
             {
-                if (_pinnedWindows.Add(hwnd) && _hiddenByUs.Remove(hwnd))
-                    SetWindowVisible(hwnd, true);
+                if (_pinnedWindows.Add(hwnd))
+                    ShowHiddenWindow(hwnd);
             }
             else
             {
                 _pinnedWindows.Remove(hwnd);
 
-                if (GetWindowWorkspace(hwnd) != _currentWorkspace && _hiddenByUs.Add(hwnd))
-                    SetWindowVisible(hwnd, false);
+                if (GetWindowWorkspace(hwnd) != _currentWorkspace)
+                    HideWindow(hwnd);
             }
 
             WorkspaceSwitched?.Invoke(this, EventArgs.Empty);
@@ -220,15 +400,9 @@ namespace RetroBar.Utilities
             if (!IsPinned(hwnd))
             {
                 if (workspace != _currentWorkspace)
-                {
-                    if (_hiddenByUs.Add(hwnd))
-                        SetWindowVisible(hwnd, false);
-                }
+                    HideWindow(hwnd);
                 else
-                {
-                    if (_hiddenByUs.Remove(hwnd))
-                        SetWindowVisible(hwnd, true);
-                }
+                    ShowHiddenWindow(hwnd);
             }
 
             WorkspaceSwitched?.Invoke(this, EventArgs.Empty);
@@ -240,6 +414,15 @@ namespace RetroBar.Utilities
             if (workspace == _currentWorkspace || _windows == null) return;
 
             ShellLogger.Info($"WorkspaceManager: Switching to workspace {workspace}");
+
+            // The workspace we're leaving keeps its last-active window in _lastActiveByWorkspace,
+            // maintained continuously by Window_PropertyChanged (see TrackActivation).
+
+            // Any activation queued by a previous switch is stale now. Force-complete any re-shows
+            // still marked in-flight from an earlier switch (bounds _pendingShow - see below).
+            _pendingActivate = IntPtr.Zero;
+            DrainStalePendingShows();
+
             _currentWorkspace = workspace;
 
             // Hide currently-visible windows that don't belong to the new workspace. Pinned windows
@@ -247,26 +430,40 @@ namespace RetroBar.Utilities
             foreach (var window in _windows.ToList())
             {
                 if (GetWindowWorkspace(window.Handle) != workspace && !IsPinned(window.Handle))
-                {
-                    if (_hiddenByUs.Add(window.Handle))
-                        SetWindowVisible(window.Handle, false);
-                }
+                    HideWindow(window.Handle);
             }
 
             // Show windows that belong to the new workspace. Hidden windows have already
             // left _windows (the shell treats a hidden window as destroyed), so restore
-            // them from our own tracking rather than from the collection.
+            // them from our own tracking rather than from the collection. Each stays in
+            // _hiddenByUs until its re-add actually lands (see _pendingShow).
             foreach (var hwnd in _hiddenByUs.ToList())
             {
                 if (GetWindowWorkspace(hwnd) != workspace)
                     continue;
 
-                _hiddenByUs.Remove(hwnd);
+                ShowHiddenWindow(hwnd);
+            }
 
-                if (IsWindow(hwnd))
-                    SetWindowVisible(hwnd, true);
+            // Queue restoring focus to whichever window was last active here. If it's already live
+            // (e.g. pinned, so it was never hidden) activate it now; otherwise its re-add will.
+            if (_lastActiveByWorkspace.TryGetValue(workspace, out IntPtr lastActive) && IsWindow(lastActive))
+            {
+                var live = _windows.FirstOrDefault(w => w.Handle == lastActive);
+                if (live != null && !_pendingShow.Contains(lastActive))
+                {
+                    ShellLogger.Debug($"WorkspaceManager: restoring focus to already-live 0x{lastActive.ToInt64():X}");
+                    live.BringToFront();
+                }
                 else
-                    _windowWorkspaces.Remove(hwnd); // closed while hidden — forget it
+                {
+                    ShellLogger.Debug($"WorkspaceManager: queued focus restore for 0x{lastActive.ToInt64():X} (awaiting re-add, pendingShow={_pendingShow.Contains(lastActive)})");
+                    _pendingActivate = lastActive;
+                }
+            }
+            else
+            {
+                ShellLogger.Debug($"WorkspaceManager: no last-active window recorded for workspace {workspace} (or it's gone) - not restoring focus");
             }
 
             WorkspaceSwitched?.Invoke(this, EventArgs.Empty);
@@ -314,7 +511,7 @@ namespace RetroBar.Utilities
                     : !inLiveCollection && kvp.Value == _currentWorkspace && !_hiddenByUs.Contains(hwnd) ? " [SUSPECT: valid handle but not in taskbar collection]"
                     : "";
 
-                ShellLogger.Info($"  hwnd=0x{hwnd.ToInt64():X} workspace={kvp.Value} isWindow={isWindow} pinned={IsPinned(hwnd)} elevated={IsElevatedWindow(hwnd)} hiddenByUs={_hiddenByUs.Contains(hwnd)} inLiveCollection={inLiveCollection} class=\"{className}\" title=\"{title}\"{flag}");
+                ShellLogger.Info($"  hwnd=0x{hwnd.ToInt64():X} workspace={kvp.Value} isWindow={isWindow} pinned={IsPinned(hwnd)} elevated={IsElevatedWindow(hwnd)} hiddenByUs={_hiddenByUs.Contains(hwnd)} pendingShow={_pendingShow.Contains(hwnd)} inLiveCollection={inLiveCollection} class=\"{className}\" title=\"{title}\"{flag}");
             }
         }
 
@@ -333,13 +530,7 @@ namespace RetroBar.Utilities
                 _windowWorkspaces[hwnd] = _currentWorkspace;
                 changed = true;
 
-                if (_hiddenByUs.Remove(hwnd))
-                {
-                    if (IsWindow(hwnd))
-                        SetWindowVisible(hwnd, true);
-                    else
-                        _windowWorkspaces.Remove(hwnd); // closed while hidden — forget it
-                }
+                ShowHiddenWindow(hwnd);
             }
 
             if (changed)
@@ -348,9 +539,12 @@ namespace RetroBar.Utilities
 
         public void ShowAllWindows()
         {
+            // Used at shutdown: show everything unconditionally and clear tracking outright -
+            // there's no taskbar left to care about the pending-show handoff.
             foreach (var hwnd in _hiddenByUs.ToList())
             {
                 _hiddenByUs.Remove(hwnd);
+                _pendingShow.Remove(hwnd);
                 if (IsWindow(hwnd))
                     SetWindowVisible(hwnd, true);
             }
