@@ -5,6 +5,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using ManagedShell.Common.Helpers;
 using ManagedShell.Interop;
+using ManagedShell.UWPInterop;
 using ManagedShell.WindowsTray;
 using RetroBar.Extensions;
 using RetroBar.Utilities;
@@ -187,6 +188,10 @@ namespace RetroBar.Controls
             if (e.ChangedButton == MouseButton.Left && _pendingLeftMouseDown)
             {
                 _pendingLeftMouseDown = false;
+                if (TryHandleSpecialLeftClick())
+                {
+                    return;
+                }
                 TrayIcon?.IconMouseDown(MouseButton.Left, MouseHelper.GetCursorPositionParam(), System.Windows.Forms.SystemInformation.DoubleClickTime);
                 TrayIcon?.IconMouseUp(MouseButton.Left, MouseHelper.GetCursorPositionParam(), System.Windows.Forms.SystemInformation.DoubleClickTime);
                 return;
@@ -229,6 +234,34 @@ namespace RetroBar.Controls
             e.Handled = true;
             if (NotifyIconListHost?.IsDraggingIcon != true)
                 TrayIcon?.IconMouseMove(MouseHelper.GetCursorPositionParam());
+        }
+
+        // Some system icons open the wrong flyout when we forward the raw click to the shell.
+        // Handle those directly so the intended flyout appears (and only that one).
+        private bool TryHandleSpecialLeftClick()
+        {
+            if (TrayIcon?.GUID.ToString() == NotificationArea.VOLUME_GUID)
+            {
+                // Show the sound (MtcUvc) volume flyout rather than the modern Quick Settings /
+                // Action Center panel the shell would otherwise pop for the volume icon.
+                ImmersiveShellHelper.ShowSoundFlyout(GetIconScreenRect());
+                return true;
+            }
+
+            return false;
+        }
+
+        private NativeMethods.Rect GetIconScreenRect()
+        {
+            Point location = NotifyIconBorder.PointToScreen(new Point(0, 0));
+            double dpiScale = PresentationSource.FromVisual(this).CompositionTarget.TransformToDevice.M11;
+            return new NativeMethods.Rect
+            {
+                Left = (int)location.X,
+                Top = (int)location.Y,
+                Right = (int)(location.X + (NotifyIconBorder.ActualWidth * dpiScale)),
+                Bottom = (int)(location.Y + (NotifyIconBorder.ActualHeight * dpiScale))
+            };
         }
 
         private bool HandleNotificationIconMouseWheel(bool upOrDown)

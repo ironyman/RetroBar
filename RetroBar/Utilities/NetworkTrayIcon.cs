@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows;
+using ManagedShell.Common.Helpers;
 using Microsoft.Win32;
 
 namespace RetroBar.Utilities
@@ -14,6 +15,8 @@ namespace RetroBar.Utilities
         private const int WM_TRAYICON_CALLBACK = 0x8001; // WM_APP + 1
         private const int WM_LBUTTONDBLCLK = 0x0203;
         private const int WM_LBUTTONUP = 0x0202;
+        private const int WM_RBUTTONUP = 0x0205;
+        private const int WM_CONTEXTMENU = 0x007B;
         private const uint NIM_ADD = 0;
         private const uint NIM_MODIFY = 1;
         private const uint NIM_DELETE = 2;
@@ -72,7 +75,16 @@ namespace RetroBar.Utilities
             Shell_NotifyIcon(NIM_MODIFY, ref nid);
         }
 
-        internal void HandleClick()
+        internal void HandleLeftClick()
+        {
+            // Win+A opens the Quick Settings flyout (network/volume/battery) on Windows 11.
+            // The immersive-shell COM action-center manager opens the notification/calendar
+            // center instead, so synthesize the keystroke. It is injected input, which RetroBar's
+            // own Win-chord keyboard hook ignores, so it reaches the shell as intended.
+            ShellHelper.ShowActionCenter();
+        }
+
+        internal void HandleRightClick()
         {
             string uri = _service?.Type == NetworkStatusService.ConnectionType.WiFi
                 ? "ms-settings:network-wifi"
@@ -220,7 +232,9 @@ namespace RetroBar.Utilities
                 {
                     int evt = (int)(m.LParam.ToInt64() & 0xFFFF);
                     if (evt == WM_LBUTTONDBLCLK || evt == WM_LBUTTONUP)
-                        _owner.HandleClick();
+                        _owner.HandleLeftClick();
+                    else if (evt == WM_RBUTTONUP || evt == WM_CONTEXTMENU)
+                        _owner.HandleRightClick();
                 }
                 else if (_wmTaskbarCreated != 0 && (uint)m.Msg == _wmTaskbarCreated)
                 {

@@ -40,12 +40,21 @@ namespace RetroBar.Controls
         {
             TipTitle.Text = (string)Application.Current.FindResource("system_stats_network");
             SystemStatsService.Instance.StatsUpdated += SystemStatsService_OnStatsUpdated;
+            ProcessStatsService.Instance.EnsureStarted();
+            ContextMenu = new ContextMenu();
+            ContextMenuOpening += NetworkMeter_OnContextMenuOpening;
             Refresh();
         }
 
         private void NetworkMeter_OnUnloaded(object sender, RoutedEventArgs e)
         {
             SystemStatsService.Instance.StatsUpdated -= SystemStatsService_OnStatsUpdated;
+            ContextMenuOpening -= NetworkMeter_OnContextMenuOpening;
+        }
+
+        private void NetworkMeter_OnContextMenuOpening(object sender, ContextMenuEventArgs e)
+        {
+            ProcessKillMenu.Populate(ContextMenu, ProcessMetric.Network);
         }
 
         private void SystemStatsService_OnStatsUpdated()

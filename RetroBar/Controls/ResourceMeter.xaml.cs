@@ -86,12 +86,27 @@ namespace RetroBar.Controls
         {
             ApplyKind();
             SystemStatsService.Instance.StatsUpdated += SystemStatsService_OnStatsUpdated;
+            ProcessStatsService.Instance.EnsureStarted();
+            ContextMenu = new ContextMenu();
+            ContextMenuOpening += ResourceMeter_OnContextMenuOpening;
             Refresh();
         }
 
         private void ResourceMeter_OnUnloaded(object sender, RoutedEventArgs e)
         {
             SystemStatsService.Instance.StatsUpdated -= SystemStatsService_OnStatsUpdated;
+            ContextMenuOpening -= ResourceMeter_OnContextMenuOpening;
+        }
+
+        private void ResourceMeter_OnContextMenuOpening(object sender, ContextMenuEventArgs e)
+        {
+            ProcessMetric metric = Kind switch
+            {
+                ResourceMeterKind.Memory => ProcessMetric.Memory,
+                ResourceMeterKind.Disk => ProcessMetric.Disk,
+                _ => ProcessMetric.Cpu
+            };
+            ProcessKillMenu.Populate(ContextMenu, metric);
         }
 
         private void SystemStatsService_OnStatsUpdated()
