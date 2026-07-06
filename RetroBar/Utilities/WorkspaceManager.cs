@@ -4,6 +4,7 @@ using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text;
 using ManagedShell.Common.Logging;
 using ManagedShell.WindowsTasks;
@@ -13,6 +14,15 @@ namespace RetroBar.Utilities
 {
     public class WorkspaceManager
     {
+        // Kept local to RetroBar (not ManagedShell.Interop) deliberately. While locked, the system
+        // refuses SetForegroundWindow from every process - we take the lock the instant a switch
+        // begins (while we still hold the WM_HOTKEY / taskbar-click foreground right) so that apps
+        // which self-activate when un-hidden can't grab the foreground vacuum our hide-loop creates.
+        [DllImport("user32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool LockSetForegroundWindow(uint uLockCode);
+        private const uint LSFW_LOCK = 1;
+        private const uint LSFW_UNLOCK = 2;
         public static readonly WorkspaceManager Instance = new WorkspaceManager();
 
         private int _currentWorkspace = 1;
@@ -37,6 +47,12 @@ namespace RetroBar.Utilities
         // Activation waits for the window's re-add (it isn't back in the collection synchronously);
         // cleared once activated, or superseded when a newer switch starts.
         private IntPtr _pendingActivate = IntPtr.Zero;
+
+        // Guards against posting more than one deferred focus-restore flush at a time.
+        private bool _activateFlushScheduled;
+
+        // Whether we currently hold the system-wide SetForegroundWindow lock (see LockForeground).
+        private bool _foregroundLocked;
 
         // While we're hiding/showing windows for a workspace switch, Windows fires a cascade of
         // incidental WINDOWACTIVATED events (hiding the foreground window activates the next one in
@@ -155,16 +171,13 @@ namespace RetroBar.Utilities
                     if (!order.Contains(w.Handle))
                         order.Add(w.Handle);
 
-                    // The window we want focused after this switch has finished restoring just came
-                    // back - activate it now that a real (fresh) instance exists. Other members of
-                    // the batch are shown without activation, so this foreground choice sticks.
-                    if (w.Handle == _pendingActivate)
-                    {
-                        _pendingActivate = IntPtr.Zero;
-                        w.BringToFront();
-                        ShellLogger.Debug($"WorkspaceManager: activated 0x{w.Handle.ToInt64():X} \"{w.Title}\" on re-add; foreground now 0x{GetForegroundWindow().ToInt64():X}");
-                    }
                 }
+
+                // Once the whole re-show batch has landed, restore focus to the target as the very
+                // last thing (see FlushPendingActivate). Doing it per-window mid-batch let a later
+                // re-show steal the foreground back.
+                if (_pendingShow.Count == 0)
+                    ScheduleActivateFlush();
             }
             else if (e.Action == NotifyCollectionChangedAction.Remove && e.OldItems != null)
             {
@@ -264,6 +277,7 @@ namespace RetroBar.Utilities
                 if (wPos < 0 || wPos < pos)
                     idx++;
             }
+            ShellLogger.Debug($"WorkspaceManager: GetInsertionIndex restoring 0x{win.Handle.ToInt64():X} \"{win.Title}\" to slot {idx} (orderPos {pos} of {order.Count})");
             return idx;
         }
 
@@ -313,6 +327,101 @@ namespace RetroBar.Utilities
             if (_pendingActivate == hwnd) _pendingActivate = IntPtr.Zero;
             foreach (var ws in _lastActiveByWorkspace.Where(kvp => kvp.Value == hwnd).Select(kvp => kvp.Key).ToList())
                 _lastActiveByWorkspace.Remove(ws);
+        }
+
+        // Focus restoration after a workspace switch is deferred through here. It's posted at
+        // Background priority so it runs after the synchronous re-show batch and after any app that
+        // grabs the foreground for itself when it's un-hidden (VS Code and friends). Restoring focus
+        // mid-batch, as we used to, let one of those later activations steal the foreground back -
+        // and since activation-tracking suppression had lapsed by the time that stray activation
+        // landed, the wrong window got recorded as the workspace's last-active, so the next switch
+        // back restored the wrong window too. Deferring makes our activation the last word.
+        // Takes the system-wide foreground lock. Must be called at the very start of a switch, while
+        // RetroBar still holds the right to change the foreground (the WM_HOTKEY token for Win+1-9,
+        // or being the foreground window itself for a taskbar-button click) - the lock can only be
+        // acquired by a process that could set the foreground right now. While held, no process
+        // (including a self-activating VS Code being un-hidden) can steal focus. Windows auto-releases
+        // the lock on genuine user input, so a missed unlock self-heals; we still always pair it.
+        private void LockForeground()
+        {
+            if (_foregroundLocked) return;
+            if (LockSetForegroundWindow(LSFW_LOCK))
+            {
+                _foregroundLocked = true;
+                ShellLogger.Debug("WorkspaceManager: locked SetForegroundWindow for switch");
+            }
+            else
+            {
+                ShellLogger.Debug($"WorkspaceManager: LockSetForegroundWindow(LOCK) failed (err {Marshal.GetLastWin32Error()}) - relying on deferred flush");
+            }
+        }
+
+        private void UnlockForeground()
+        {
+            if (!_foregroundLocked) return;
+            LockSetForegroundWindow(LSFW_UNLOCK);
+            _foregroundLocked = false;
+            ShellLogger.Debug("WorkspaceManager: unlocked SetForegroundWindow");
+        }
+
+        private void ScheduleActivateFlush()
+        {
+            if (_activateFlushScheduled || _pendingActivate == IntPtr.Zero)
+                return;
+
+            var dispatcher = System.Windows.Application.Current?.Dispatcher;
+            if (dispatcher == null)
+                return;
+
+            _activateFlushScheduled = true;
+            dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background,
+                new Action(FlushPendingActivate));
+        }
+
+        private void FlushPendingActivate()
+        {
+            _activateFlushScheduled = false;
+
+            IntPtr target = _pendingActivate;
+            if (target == IntPtr.Zero)
+            {
+                // Nothing to restore (target was cleared by a newer switch or a close) - release the
+                // lock we took for the switch so the system isn't left frozen.
+                UnlockForeground();
+                return;
+            }
+
+            // More re-shows are still in flight - wait. The Add handler re-schedules us once the
+            // batch fully drains, so we always activate strictly last. Keep the lock held meanwhile.
+            if (_pendingShow.Count > 0)
+                return;
+
+            var live = _windows?.FirstOrDefault(w => w.Handle == target);
+            if (live == null || !IsWindow(target))
+            {
+                ShellLogger.Debug($"WorkspaceManager: pending focus target 0x{target.ToInt64():X} no longer live - skipping restore");
+                _pendingActivate = IntPtr.Zero;
+                UnlockForeground();
+                return;
+            }
+
+            _pendingActivate = IntPtr.Zero;
+
+            // Release the lock immediately before we activate: while held it refuses *every*
+            // SetForegroundWindow, ours included. The apps that would steal focus already tried and
+            // were denied during the locked hide/show, and they don't retry, so unlocking here and
+            // activating right away lets our target win uncontested.
+            UnlockForeground();
+            live.BringToFront();
+
+            // Record the restored window directly as the authoritative outcome, and keep suppression
+            // alive so a self-activation a stubborn app fires immediately afterwards is treated as
+            // incidental instead of overwriting the memory we just restored. Genuine user clicks are
+            // still captured - either after suppression lapses, or by the foreground snapshot taken
+            // when this workspace is next left.
+            BumpActivationSuppression();
+            _lastActiveByWorkspace[_currentWorkspace] = target;
+            ShellLogger.Debug($"WorkspaceManager: flushed focus restore to 0x{target.ToInt64():X} \"{live.Title}\"; foreground now 0x{GetForegroundWindow().ToInt64():X}");
         }
 
         // Safety net for _pendingShow: normally an entry is cleared when the shell re-adds the
@@ -415,8 +524,44 @@ namespace RetroBar.Utilities
 
             ShellLogger.Info($"WorkspaceManager: Switching to workspace {workspace}");
 
+            // Take the foreground lock now, while we're still inside the WM_HOTKEY / click handler and
+            // therefore still hold the right to change the foreground. From here until the deferred
+            // flush activates our target (or the no-target branch below), no other process can grab
+            // focus - which is what stops apps that self-activate on un-hide from stealing the vacuum
+            // our hide-loop opens. UnlockForeground is idempotent, so clear any lock a prior switch
+            // left behind (e.g. if its flush never ran) before taking a fresh one.
+            UnlockForeground();
+            LockForeground();
+
+            int leaving = _currentWorkspace;
+
+            // Snapshot the departing workspace's live taskbar order straight from the on-screen
+            // collection. The incremental order tracking (Add/Move) drifts from the true display
+            // order: GroupAfterParent (ParentWindowHelper.FindInsertionIndex) inserts a newly opened
+            // window right after the active window - i.e. mid-list - while our Add handler only ever
+            // appends it to _workspaceOrder. That divergence is what made a window (e.g. a second
+            // VS Code window grouped next to its sibling) jump to the end after a round-trip. Re-reading
+            // the real order at leave time is authoritative, so switching back restores exactly what
+            // was on screen regardless of the async order the OS re-adds windows in.
+            _workspaceOrder[leaving] = _windows.Select(w => w.Handle).ToList();
+
+            // Pin down the window to restore focus to, from the current foreground. Continuous
+            // activation tracking (Window_PropertyChanged) can miss the user's last click when it
+            // lands inside the post-switch suppression window, leaving this workspace's last-active
+            // stale or unset. The live foreground window is ground truth - but only trust it when it's
+            // one of our app windows actually on the workspace we're leaving. If focus is on the
+            // taskbar itself (e.g. the switch came from clicking a taskbar workspace button) it won't
+            // be in _windows, so we fall back to the continuously-tracked value.
+            IntPtr fg = GetForegroundWindow();
+            if (fg != IntPtr.Zero && _windows.Any(w => w.Handle == fg) && GetWindowWorkspace(fg) == leaving)
+            {
+                _lastActiveByWorkspace[leaving] = fg;
+                ShellLogger.Debug($"WorkspaceManager: snapshot last-active for workspace {leaving} at leave: 0x{fg.ToInt64():X}");
+            }
+
             // The workspace we're leaving keeps its last-active window in _lastActiveByWorkspace,
-            // maintained continuously by Window_PropertyChanged (see TrackActivation).
+            // maintained continuously by Window_PropertyChanged (see TrackActivation) and pinned down
+            // by the foreground snapshot above.
 
             // Any activation queued by a previous switch is stale now. Force-complete any re-shows
             // still marked in-flight from an earlier switch (bounds _pendingShow - see below).
@@ -445,25 +590,23 @@ namespace RetroBar.Utilities
                 ShowHiddenWindow(hwnd);
             }
 
-            // Queue restoring focus to whichever window was last active here. If it's already live
-            // (e.g. pinned, so it was never hidden) activate it now; otherwise its re-add will.
+            // Queue restoring focus to whichever window was last active here. The actual activation
+            // is always deferred (see FlushPendingActivate) so it runs after the whole re-show batch
+            // settles - restoring mid-batch let a later re-show, or an app that self-activates when
+            // un-hidden, steal the foreground back. If nothing is being re-shown (target already
+            // live, e.g. pinned), the flush scheduled below fires right away.
             if (_lastActiveByWorkspace.TryGetValue(workspace, out IntPtr lastActive) && IsWindow(lastActive))
             {
-                var live = _windows.FirstOrDefault(w => w.Handle == lastActive);
-                if (live != null && !_pendingShow.Contains(lastActive))
-                {
-                    ShellLogger.Debug($"WorkspaceManager: restoring focus to already-live 0x{lastActive.ToInt64():X}");
-                    live.BringToFront();
-                }
-                else
-                {
-                    ShellLogger.Debug($"WorkspaceManager: queued focus restore for 0x{lastActive.ToInt64():X} (awaiting re-add, pendingShow={_pendingShow.Contains(lastActive)})");
-                    _pendingActivate = lastActive;
-                }
+                _pendingActivate = lastActive;
+                ShellLogger.Debug($"WorkspaceManager: queued focus restore for 0x{lastActive.ToInt64():X} (pendingShow={_pendingShow.Contains(lastActive)}, inFlight={_pendingShow.Count})");
+                if (_pendingShow.Count == 0)
+                    ScheduleActivateFlush();
             }
             else
             {
                 ShellLogger.Debug($"WorkspaceManager: no last-active window recorded for workspace {workspace} (or it's gone) - not restoring focus");
+                // Nothing will be activated, so no deferred flush runs to release the lock - drop it now.
+                UnlockForeground();
             }
 
             WorkspaceSwitched?.Invoke(this, EventArgs.Empty);
