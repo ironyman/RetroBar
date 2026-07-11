@@ -89,7 +89,7 @@ namespace RetroBar.Utilities
 
         private WorkspaceManager() { }
 
-        public void Initialize(ObservableCollection<ApplicationWindow> windows)
+        public void Initialize(ObservableCollection<ApplicationWindow> windows, TasksService tasksService)
         {
             _windows = windows;
 
@@ -106,6 +106,44 @@ namespace RetroBar.Utilities
             _workspaceOrder[_currentWorkspace] = initialOrder;
 
             _windows.CollectionChanged += Windows_CollectionChanged;
+            tasksService.WindowActivated += TasksService_WindowActivated;
+        }
+
+        // Fires on every HSHELL_WINDOWACTIVATED/RUDEAPPACTIVATED - i.e. whenever some window becomes
+        // the foreground window, for any reason, not just switches we initiated. Normally a window
+        // that isn't on the current workspace can't become foreground at all - hiding it (SW_HIDE)
+        // takes it out of the running entirely. But some apps bypass that: a single-instance app
+        // relaunched from a shortcut finds its own existing (hidden) window and calls
+        // ShowWindow(SW_RESTORE)/SetForegroundWindow on it directly, without going through us. That
+        // leaves the window genuinely on screen and foreground while WorkspaceManager still has it
+        // recorded on its old workspace and marked hidden-by-us - which hides its task button (see
+        // TaskList.Tasks_Filter) even though the window itself is visible. Since the window is
+        // unmistakably here now, follow it: reassign it to the current workspace instead of leaving
+        // its button hidden.
+        private void TasksService_WindowActivated(object sender, WindowEventArgs e)
+        {
+            IntPtr hwnd = e.Window?.Handle ?? IntPtr.Zero;
+            if (hwnd == IntPtr.Zero || !_hiddenByUs.Contains(hwnd))
+                return;
+
+            int oldWorkspace = GetWindowWorkspace(hwnd);
+            if (oldWorkspace == _currentWorkspace)
+                return;
+
+            ShellLogger.Debug($"WorkspaceManager: 0x{hwnd.ToInt64():X} \"{e.Window.Title}\" came to foreground outside our control - moving it from workspace {oldWorkspace} to {_currentWorkspace}");
+
+            if (_workspaceOrder.TryGetValue(oldWorkspace, out var oldOrder))
+                oldOrder.Remove(hwnd);
+
+            _windowWorkspaces[hwnd] = _currentWorkspace;
+            _hiddenByUs.Remove(hwnd);
+            _pendingShow.Remove(hwnd);
+
+            var order = GetOrCreateWorkspaceOrder(_currentWorkspace);
+            if (!order.Contains(hwnd))
+                order.Add(hwnd);
+
+            WorkspaceSwitched?.Invoke(this, EventArgs.Empty);
         }
 
         // Continuously remember, per workspace, the most recently activated window - so a later
