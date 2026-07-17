@@ -650,6 +650,42 @@ namespace RetroBar.Utilities
             WorkspaceSwitched?.Invoke(this, EventArgs.Empty);
         }
 
+        // Manual escape hatch mirroring TasksService.SweepDeadWindows. A hwnd we've marked
+        // _hiddenByUs is deliberately skipped by Windows_CollectionChanged's remove handler (kept
+        // alive on the assumption it's only hidden for another workspace, not closed) - so if the
+        // shell's WINDOWDESTROYED notification is ever missed for a hidden window, it never gets a
+        // chance to reach that check at all, and outlives every other cleanup path (PruneOrphanedWindows
+        // only fires on a collection Reset, DrainStalePendingShows only during a switch). This forces
+        // the issue by checking IsWindow() directly. Returns the number removed.
+        public int SweepDeadWindows()
+        {
+            var deadHandles = _windowWorkspaces.Keys
+                .Concat(_hiddenByUs)
+                .Concat(_pendingShow)
+                .Distinct()
+                .Where(h => !IsWindow(h))
+                .ToList();
+
+            foreach (var hwnd in deadHandles)
+            {
+                _windowWorkspaces.Remove(hwnd);
+                _pinnedWindows.Remove(hwnd);
+                _elevationCache.Remove(hwnd);
+                _hiddenByUs.Remove(hwnd);
+                _pendingShow.Remove(hwnd);
+                ForgetLastActive(hwnd);
+            }
+
+            foreach (var order in _workspaceOrder.Values)
+                order.RemoveAll(h => !IsWindow(h));
+
+            if (deadHandles.Count > 0)
+                WorkspaceSwitched?.Invoke(this, EventArgs.Empty);
+
+            ShellLogger.Info($"WorkspaceManager: SweepDeadWindows removed {deadHandles.Count} dead hwnd(s)");
+            return deadHandles.Count;
+        }
+
         public int GetWorkspaceWindowCount(int workspace)
         {
             // Count from the persistent map, not _windows: windows on other workspaces

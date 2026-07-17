@@ -151,6 +151,7 @@
     <s:String x:Key="collapse_all">Collapse _all</s:String>
     <s:String x:Key="uncollapse_all">_Uncollapse all</s:String>
     <s:String x:Key="gather_all_windows">_Gather all windows</s:String>
+    <s:String x:Key="fix_stuck_taskbar_buttons">Fi_x stuck taskbar buttons</s:String>
     <s:String x:Key="recently_closed">Recently closed</s:String>
     <s:String x:Key="system_stats_cpu">CPU</s:String>
     <s:String x:Key="system_stats_memory">Memory</s:String>

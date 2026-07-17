@@ -157,6 +157,9 @@
             <MenuItem Header="{DynamicResource gather_all_windows}"
                       Click="GatherAllWindowsMenuItem_OnClick"
                       Tag="gather-all-windows" />
+            <MenuItem Header="{DynamicResource fix_stuck_taskbar_buttons}"
+                      Click="SweepDeadWindowsMenuItem_OnClick"
+                      Tag="sweep-dead-windows" />
             <MenuItem Header="{DynamicResource collapse_all}"
                       Click="CollapseAllGroupsMenuItem_OnClick"
                       Name="CollapseAllGroupsMenuItem" />

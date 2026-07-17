@@ -862,6 +862,12 @@ namespace RetroBar
             WorkspaceManager.Instance.GatherWindows();
         }
 
+        private void SweepDeadWindowsMenuItem_OnClick(object sender, RoutedEventArgs e)
+        {
+            TaskListControl?.Tasks?.SweepDeadWindows();
+            WorkspaceManager.Instance.SweepDeadWindows();
+        }
+
         private void CollapseAllGroupsMenuItem_OnClick(object sender, RoutedEventArgs e)
         {
             TaskListControl?.CollapseAllGroups();
