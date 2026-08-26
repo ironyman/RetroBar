@@ -272,6 +272,9 @@
                             <CheckBox IsChecked="{Binding Source={x:Static Settings:Settings.Instance}, Path=GroupAfterParent, UpdateSourceTrigger=PropertyChanged}">
                                 <Label Content="{DynamicResource group_after_parent}" />
                             </CheckBox>
+                            <CheckBox IsChecked="{Binding Source={x:Static Settings:Settings.Instance}, Path=FilterZeroSizeWindows, UpdateSourceTrigger=PropertyChanged}">
+                                <Label Content="{DynamicResource filter_zero_size_windows}" />
+                            </CheckBox>
                         </StackPanel>
                     </GroupBox>
                     <GroupBox Header="{DynamicResource notification_area}">

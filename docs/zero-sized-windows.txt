@@ -1,0 +1,806 @@
+╭─── Claude Code v2.1.241 ─────────────────────────────────────────────────────╮
+│                                                    │ Tips for getting        │
+│             Welcome back human friend!             │ started                 │
+│                                                    │ Run /init to create a … │
+│                       ▐▛███▛█                      │ ─────────────────────── │
+│                      ▝▜██████▀                     │ What's new              │
+│                        ▝▝ ▝▝                       │ Bug fixes and reliabil… │
+│                                                    │ Bug fixes and reliabil… │
+│         Sonnet 5 · Claude Pro · Changyu Li         │ Cost estimates (`/cost… │
+│  ~\source\repos\remap_win_e\RetroBar\ManagedShell  │ /release-notes for more │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+
+❯ can you check logs for why sometimes when i switch windows but clicking on    
+  retrobar task button, an invisible window pops up at the end and disappears   
+  immediately                                                                   
+
+  Searched for 6 patterns, read 6 files, listed 1 directory, ran 4 shell commands (ctrl+o to expand)
+
+● I dug through 2026-08-21_122450445.log (14 MB, in
+  %LocalAppData%\RetroBar\Logs) and found the exact sequence, repeated many
+  times over the last two days. Here's one instance, verbatim:
+
+  Taskbar: FG hook fgHwnd=0x2609FC selfHwnd=0x509CA menuOpen=False
+  TaskList: SetTaskButtonWidth taskCount=13 ...              <- taskbar grows by
+  one button
+  TasksService: Added window 2492924 ()                      <- new button,
+  blank title
+  WorkspaceManager: SAVED last-active for workspace 1: 0x2609FC ""
+  TasksService: Activated window 2492924 ()
+  FullScreenHelper: getFullScreenApp hWnd=2492924 ... rect=960,581,960,581   <-
+  0×0 size!
+  TaskList: SetTaskButtonWidth taskCount=12 ...               <- button gone
+  again
+  TasksService: Removed window 2492924 ()
+  WorkspaceManager: SAVED last-active for workspace 1: 0x120B6E "Word add-in
+  7f3c…-Word"
+  TasksService: Activated window 1182574 (Word add-in 7f3c…-Word)   <- the real
+  window
+
+  All of that happens inside the same second (often the same tick). It
+  reproduces at least 4 times in this one log, always around a Word window,
+  always with rect=960,581,960,581 — a zero-width/zero-height window centered on
+  screen, with an empty title.
+
+  Root cause: ApplicationWindow.makeForeground()
+  (ManagedShell/src/ManagedShell.WindowsTasks/ApplicationWindow.cs:697), which
+  BringToFront() calls when you click a task button, does:
+
+  IntPtr hWnd = NativeMethods.GetLastActivePopup(Handle);
+  ...
+  NativeMethods.SetForegroundWindow(hWnd);
+
+  GetLastActivePopup doesn't return the window you clicked — it returns whatever
+  Windows has recorded as that window's "last active popup." For this Word
+  add-in, that turns out to be a stray, invisible, 0×0 owned window the add-in
+  created and never cleaned up. So RetroBar ends up calling SetForegroundWindow
+  on that invisible helper window instead of the real Word window.
+
+  That triggers HSHELL_RUDEAPPACTIVATED for the invisible hwnd.
+  TasksService.ShellWinProc's WINDOWACTIVATED/RUDEAPPACTIVATED handler
+  (TasksService.cs:415-465) adds any window that passes the basic style-bit
+  check (CanAddToTaskbar) with no debounce and no re-validation — so it gets a
+  real task button, at the end of the list, with a blank icon/title. A moment
+  later Word's own activation logic notices and redirects real focus to the
+  actual document window, the helper window gets destroyed, and RetroBar removes
+  the phantom button. That flash is exactly what you're seeing.
+
+  This is specific to that one Word add-in leaving around a bad window (title
+  suggests a COM/VSTO add-in with GUID 7f3c1e58-9a24-4d6b-b1f0-2e5c8a91d743 — I
+  couldn't identify it from the log alone), but RetroBar's side is doing nothing
+  to guard against it.
+
+  Possible fix on RetroBar's side: in makeForeground(), reject the popup
+  GetLastActivePopup returns if it's not a "real" window (e.g. zero-sized and/or
+  invisible) and fall back to Handle itself. Optionally also harden
+  TasksService's activation handler to not blindly add a window with an empty
+  title / zero size as a task button.
+
+  Want me to implement that guard?
+
+✻ Worked for 2m 55s
+
+❯ but why does it disappear                                                     
+
+● Because Word itself destroys that window almost as fast as it created it —
+  RetroBar isn't hiding it, the window's whole lifecycle (create → become
+  foreground → get destroyed) happens in about the same instant, and the taskbar
+  just faithfully mirrors each step.
+
+  Concretely: TasksService.removeWindow() (TasksService.cs) is only ever called
+  from a handful of places, and its log line is exactly "TasksService: Removed 
+  window {hwnd} ({title})" with nothing else printed first. In the trace, that's
+  what appears — no Cloak event, no RegisterTab, no CloseWindow-style "no
+  response" message preceding it. That leaves one real candidate: the
+  HSHELL.WINDOWDESTROYED case in ShellWinProc:
+
+  case HSHELL.WINDOWDESTROYED:
+      removeWindow(msg.LParam);
+      break;
+
+  This fires when Explorer's shell-hook mechanism (which RetroBar is registered
+  for via RegisterShellHookWindow) sees the window's HWND actually get destroyed
+  — a real WM_DESTROY, not a hide/cloak.
+
+  So the sequence is:
+  1. The Word add-in creates a throwaway, invisible, 0×0 top-level window
+     (probably as some kind of internal focus-transfer or interop trampoline).
+  2. That window briefly becomes the foreground window — which is what
+     GetLastActivePopup handed RetroBar in makeForeground(), and what triggers
+     HSHELL_RUDEAPPACTIVATED → RetroBar adds it as a task button.
+  3. The add-in is done with it almost immediately and calls DestroyWindow on
+     it, handing real focus to the actual Word document window.
+  4. Explorer's shell hook reports that destruction, RetroBar's
+     HSHELL.WINDOWDESTROYED handler calls removeWindow(), and the phantom button
+     is pulled from the collection.
+
+  All four of those steps land in the same handful of milliseconds (same log
+  timestamp, often the same tick), which is why it reads as "pops up and
+  disappears immediately" rather than a window that's actually hidden for a
+  while.
+
+  The fix I proposed still applies here: it's step 2 that's avoidable on
+  RetroBar's side — if makeForeground() refuses to activate a 0×0/invisible
+  popup returned by GetLastActivePopup and falls back to the real Handle,
+  RetroBar never sets that helper window foreground in the first place, so it
+  never gets picked up as a task button at all (steps 2–4 never happen). Want me
+  to implement that guard?
+
+✻ Churned for 31s
+
+❯ and why are we calling GetLastActivePopup                                     
+
+  Ran 4 shell commands (ctrl+o to expand)
+
+● Fetch(https://github.com/dremin/RetroBar/pull/353)
+  ⎿  Received 240.1KB (200 OK)
+
+● Good question — it's not incidental, it was added deliberately to fix a
+  different bug (dremin/RetroBar#353, ManagedShell commit 1e84467, "Bring
+  correct window to foreground").
+
+  The problem it solves: if a window has a modal dialog open (e.g. Word's
+  document window with a "Save As" or alert dialog up), Windows won't let the
+  owner window take focus while its modal child is showing — that's how modality
+  works. Before this change, RetroBar just called SetForegroundWindow(Handle)
+  on the window you clicked. If that window had a modal dialog open, this would
+  try to foreground the owner behind its own modal dialog — which either
+  silently fails or looks broken (owner comes forward, dialog stays behind it,
+  dialog doesn't actually get focus).
+
+  GetLastActivePopup(Handle) asks Windows "what's the actual window that should
+  get focus for this owner right now" — if there's a modal dialog up, it returns
+  the dialog's hwnd; if not, it returns Handle itself unchanged. So clicking a
+  task button correctly focuses the open "Save changes?" dialog instead of
+  uselessly trying to activate the document behind it.
+
+  Why it misfires here: GetLastActivePopup isn't scoped to currently visible
+  popups — it returns whatever Windows last recorded as that owner's active
+  popup, even if that popup is a stale, invisible, 0×0 helper window the add-in
+  created and forgot about. Windows doesn't validate that for you; it just
+  returns the last one it tracked.
+
+  So the fix needs to keep calling GetLastActivePopup (that's load-bearing for
+  the modal-dialog case) but reject what it returns when that popup isn't a
+  real, visible, non-degenerate window — and fall back to Handle in that case,
+  same as GetLastActivePopup itself falls back to Handle when there's no popup
+  at all. Something like:
+
+  private void makeForeground()
+  {
+      IntPtr hWnd = NativeMethods.GetLastActivePopup(Handle);
+      if (hWnd != Handle && !IsGenuinePopup(hWnd))
+          hWnd = Handle;
+      ...
+  }
+
+  private static bool IsGenuinePopup(IntPtr hWnd)
+  {
+      if (!NativeMethods.IsWindow(hWnd) || !NativeMethods.IsWindowVisible(hWnd))
+          return false;
+      NativeMethods.GetWindowRect(hWnd, out var r);
+      return r.Right > r.Left && r.Bottom > r.Top; // reject 0×0
+  }
+
+  That preserves the modal-dialog fix while filtering out the Word add-in's
+  zero-size ghost popup. Want me to add this to ApplicationWindow.cs (and apply
+  the same call sites — BringToFront, Restore, Maximize, DoClose, Move, Size all
+  funnel through makeForeground)?
+
+✻ Sautéed for 42s
+
+❯ what's the relationship between us calling GetLastActivePopup and word        
+  creating that window?                                                         
+
+  Searched for 1 pattern, read 1 file (ctrl+o to expand)
+● They're two separate things, and mixing them up was my mistake in the earlier
+  framing — let me be precise about what's actually established from the log vs.
+  what's a source-side detail:
+
+  What we know for certain:
+  - Word/the add-in creates and destroys that invisible window. RetroBar never
+    calls CreateWindow on anyone's behalf — it only ever queries and activates
+    windows that already exist. So the window's existence is 100% Word's (or the
+    add-in's) doing, not ours.
+  - GetLastActivePopup is a pure, read-only query. It doesn't create, show, or
+    activate anything. It just asks Windows: "of this window's owned popups,
+    which one did Windows last record as active?" Windows maintains that
+    bookkeeping on its own, updated any time an owned window becomes active for
+    any reason — nothing to do with RetroBar.
+
+  Where our call actually plugs in:
+  Windows only lets you use SetForegroundWindow to steal focus — it won't let a
+  background app pop something into existence as foreground on its own
+  initiative in the general case. So for that invisible window to become the
+  literal OS-wide foreground window (which is what makes the shell hook fire
+  HSHELL_RUDEAPPACTIVATED and get a taskbar button drawn for it), someone has to
+  explicitly call SetForegroundWindow(that hwnd).
+
+  Looking at the two examples in the log, that "someone" isn't consistent:
+
+  - In the first trace (0x2609FC), the phantom window becomes foreground before
+    the real Word window does. That fits our code exactly: your click →
+    BringToFront() → makeForeground() → GetLastActivePopup(Handle) happens to
+    return that stray window (because Windows' bookkeeping says it's the "last
+    active popup" for that owner) → we call SetForegroundWindow on it instead of
+    the real window → it flashes into the taskbar → Word notices its scratch
+    window wrongly has focus and immediately redirects to the real one. Here, we
+    are the direct cause — our call is what promotes a dormant, forgotten
+    window into real OS foreground.
+  - In the third trace, the real Word window activates first, and the phantom
+    shows up briefly after, with no second task-button click in between. That
+    one isn't explained by our GetLastActivePopup call at all — nothing in
+    RetroBar touches that window a second time. That has to be Word/the add-in
+    calling SetForegroundWindow (or equivalent) on its own scratch window
+    itself, as some internal side effect of its own activation handling.
+
+  So the honest relationship is: GetLastActivePopup is a mechanism we use that's
+  capable of surfacing this stray window and having us activate it on Word's 
+  behalf — and the log shows that happening at least once — but it isn't the 
+  only way this window gets activated. Word's add-in appears to have a genuine
+  bug where a throwaway window it creates sometimes gets real OS focus,
+  independent of us.
+
+  Practically, this doesn't change the fix: guarding makeForeground() against
+  degenerate (0×0/invisible) popups stops our contribution to the problem — the
+  case where we're the one who promotes the stray window to foreground. It won't
+  stop Word from doing it to itself in the other case, but RetroBar can't do
+  anything about that half regardless (that's Windows correctly reporting a real
+  foreground change Word itself initiated) — the shell-hook-driven phantom
+  button would still flash for a tick either way. The guard is still worth
+  adding since it's the one path where RetroBar is actively contributing to the
+  glitch rather than just observing it.
+
+  Want me to add it?
+
+✻ Brewed for 2m 37s
+
+❯ and word deleting that windw                                                  
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● Yes — that part is entirely Word's doing, and I can say that with more
+  certainty than the activation side.
+
+  RetroBar (nor ManagedShell underneath it) never calls DestroyWindow on any
+  window it doesn't own. Grepping the whole codebase, the only DestroyWindow
+  calls are on RetroBar's own internal hidden windows (TrayService's
+  notification-icon host windows, ShellWindow.Handle). There's no code path
+  anywhere that destroys another process's window — RetroBar has no mechanism to
+  do that even if it wanted to (you can't DestroyWindow a handle owned by a
+  different process/thread; only that thread can destroy its own window).
+
+  So the removal is straightforwardly: Word's add-in creates that scratch 
+  window, and Word's add-in tears it down itself — a plain DestroyWindow() call
+  from inside Word's own process, almost immediately after creating it. That
+  generates a genuine WM_DESTROY, which Explorer's shell-hook machinery (the
+  same RegisterShellHookWindow mechanism any taskbar app registers for)
+  broadcasts as HSHELL_WINDOWDESTROYED to every listening shell, RetroBar
+  included.
+
+  RetroBar's side of that is entirely passive — it's just this:
+
+  case HSHELL.WINDOWDESTROYED:
+      removeWindow(msg.LParam);
+      break;
+
+  removeWindow doesn't ask "was this window valid" or "should it have been
+  added" — it just drops whatever ApplicationWindow instance has that handle out
+  of the Windows collection, which is what makes the task button vanish from
+  the WPF ItemsControl immediately.
+
+  So to put the full lifecycle together now that all three questions are
+  answered:
+  1. Create — Word's add-in creates the invisible 0×0 window (its bug, not
+     ours).
+  2. Activate — it becomes the real OS foreground window either because we
+     handed it real foreground via GetLastActivePopup + SetForegroundWindow
+     (confirmed in one trace), or because Word activates it itself as a side
+     effect of its own logic (the other trace) — RetroBar's shell hook sees this
+     as HSHELL_RUDEAPPACTIVATED and adds a task button.
+  3. Destroy — Word's add-in destroys the same window a moment later (its doing
+     entirely), RetroBar's shell hook sees HSHELL_WINDOWDESTROYED and removes
+     the button.
+
+  RetroBar only actively contributes to step 2, and only in the case where our
+  own GetLastActivePopup call is what surfaces the window. That's still the one
+  piece worth guarding against — want me to add the fix now?
+
+✻ Brewed for 22s
+
+❯ i mean when are these things happening in relation to each other? because     
+  what i see is a window in task list appear and disappear                      
+
+● Here's the actual order from the log, for the cleanest example (all of this
+  happens at 10:34:40 AM — the log only has 1-second resolution, but the
+  ordering of the lines tells you the sequence within that second):
+
+  #: 1
+  Log line: Taskbar: TasksService_WindowActivated hwnd=0x120B6E
+  What's actually happening: The real Word window had just been reported active
+  a
+  moment earlier — this is the tail of a prior activation, not this event yet
+  Who: —
+  ────────────────────────────────────────
+  #: 2
+  Log line: Taskbar: FG hook fgHwnd=0x2609FC
+  What's actually happening: The OS foreground window genuinely changes to the
+  invisible window. This is EVENT_SYSTEM_FOREGROUND firing — a real,
+  OS-confirmed activation, not RetroBar's bookkeeping
+  Who: Something called SetForegroundWindow(0x2609FC) — either RetroBar's
+  makeForeground() (if GetLastActivePopup returned this stray handle for your
+  click) or Word itself
+  ────────────────────────────────────────
+  #: 3
+  Log line: Taskbar: FG hook owner=0x0
+  What's actually happening: RetroBar checks: is this our own popup? No
+  Who: RetroBar (just checking)
+  ────────────────────────────────────────
+  #: 4
+  Log line: TaskList: SetTaskButtonWidth taskCount=13
+  What's actually happening: WPF taskbar layout recomputes because a 13th button
+
+  just appeared
+  Who: RetroBar (reacting)
+  ────────────────────────────────────────
+  #: 5
+  Log line: TasksService: Added window 2492924 ()
+  What's actually happening: The shell hook received HSHELL_RUDEAPPACTIVATED for
+
+  0x2609FC, it passed the eligibility check, so it got added to the Windows
+  collection → this is the  moment the phantom button becomes visible
+  Who: RetroBar (reacting to the OS event from step 2)
+  ────────────────────────────────────────
+  #: 6
+  Log line: TasksService: Activated window 2492924 ()
+  What's actually happening: Marked as the active/highlighted button
+  Who: RetroBar
+  ────────────────────────────────────────
+  #: 7
+  Log line: TaskList: SetTaskButtonWidth taskCount=12
+  What's actually happening: Layout recomputes again — back down to 12 buttons
+  Who: RetroBar (reacting)
+  ────────────────────────────────────────
+  #: 8
+  Log line: TasksService: Removed window 2492924 ()
+  What's actually happening: The shell hook received HSHELL_WINDOWDESTROYED for
+  0x2609FC → this is the moment the phantom button  disappears
+  Who: RetroBar, reacting to Word calling DestroyWindow() on its own scratch
+  window
+  ────────────────────────────────────────
+  #: 9
+  Log line: Taskbar: FG hook fgHwnd=0x120B6E
+  What's actually happening: OS foreground genuinely changes again, this time to
+
+  the real Word window
+  Who: Word, restoring its own focus
+  ────────────────────────────────────────
+  #: 10
+  Log line: TasksService: Activated window 1182574 (Word add-in … - Word)
+  What's actually happening: The real task button becomes active
+  Who: RetroBar (reacting)
+
+  So the causal chain, end to end:
+
+  click/trigger → real OS foreground change to the invisible window (step 2) → 
+  RetroBar sees it and adds a button (step 5) → Word destroys that window a beat
+  later (step 8, RetroBar just removes the button) → Word puts real foreground 
+  back on itself (step 9).
+
+  Everything from step 2 through step 9 happens inside roughly the same second —
+  that's the "appear and disappear" flash you're seeing. It isn't RetroBar
+  polling and briefly getting confused about something that was always there; a
+  real Win32 window genuinely becomes the foreground window for a fraction of a
+  second, genuinely gets destroyed, and RetroBar's taskbar is just accurately
+  reflecting both of those real, momentary OS-level events in sequence.
+
+  The other example I found earlier has the same four beats (foreground-change →
+  add → destroy → foreground-change-back) but in the opposite order (real
+  window active first, then the phantom bounces through, then real window again)
+  — same mechanism, just Word's internal timing landing differently.
+
+  Ready to add the makeForeground() guard when you want it.
+
+✻ Baked for 1m 5s
+
+❯ so this isn't our problem? it's just word being weird and creating invisible  
+  windows and closing it immediately? how does windows task bar handle this?    
+
+● Fair pushback — "not our problem" is too strong. Let me separate the two
+  questions:
+
+  Is Word creating a bogus 0×0 window our bug? No — that's genuinely Word/the
+  add-in doing something weird internally. RetroBar can't stop Word from
+  creating and destroying junk windows.
+
+  Is showing a flash for it in the taskbar our bug? Yes, functionally — because
+  the real Windows taskbar, watching the exact same OS-level events (it also
+  gets HSHELL_RUDEAPPACTIVATED/foreground changes, or the modern equivalent),
+  doesn't flash a button for this window. So whatever Explorer is doing
+  differently is exactly the gap RetroBar should close.
+
+  How does Explorer's taskbar avoid it? A couple of things, as far as this class
+  of bug goes:
+
+  1. It doesn't trust an activation event alone. Modern Explorer's taskband
+     (Windows 8+) doesn't build its UI off the legacy HSHELL_* shell-hook
+     messages at all — those are a compatibility shim kept around for
+     third-party shells like RetroBar. Explorer itself uses the Immersive
+     Shell's private window-list APIs (IApplicationViewCollection/DWM
+     composition state), which carry more metadata and get to apply their own
+     settle/eligibility logic before a view is considered "real." RetroBar, as a
+     third-party shell, only has the legacy shell hook to work with, which is
+     coarser — it reports every raw activation/creation as it happens, with no
+     debounce.
+  2. The obvious, generic filter: window size. A 0×0 window was never a
+     legitimate on-screen application window a user could actually interact
+     with. Explorer's window classification almost certainly excludes
+     degenerate-rect windows outright.
+
+  RetroBar's ApplicationWindow.CanAddToTaskbar (ApplicationWindow.cs) currently
+  checks visibility, tool-window/owner/appwindow flags, and a shell-set
+  "deleted" prop — but not window size. Every phantom instance in the log had
+  rect=960,581,960,581 (zero area). Adding that one check closes this off at the
+  earliest possible gate — TasksService.ShellWinProc's
+  WINDOWACTIVATED/RUDEAPPACTIVATED case already bails out via !CanAddToTaskbar
+  before ever calling addWindow, so a zero-size window would never get a button
+  at all, regardless of whether it was RetroBar or Word that made it briefly 
+  foreground. That's better than the makeForeground() guard alone, since it
+  covers both causal paths we found (us activating it via GetLastActivePopup,
+  and Word activating it on its own).
+
+  Concretely:
+
+  public bool CanAddToTaskbar
+  {
+      get
+      {
+          ...
+          bool isDeleted = NativeMethods.GetProp(Handle, "ITaskList_Deleted") !=
+  IntPtr.Zero;
+          IntPtr ownerWin = NativeMethods.GetWindow(Handle,
+  NativeMethods.GetWindow_Cmd.GW_OWNER);
+          NativeMethods.GetWindowRect(Handle, out NativeMethods.Rect rect);
+          bool hasArea = rect.Right > rect.Left && rect.Bottom > rect.Top;
+
+          return isWindow && isVisible && hasArea && (ownerWin == IntPtr.Zero ||
+  isAppWindow) && (!isNoActivate || isAppWindow) && !isToolWindow &&
+  !isDeleted;
+      }
+  }
+
+  I'd pair that with the earlier makeForeground() guard too
+  (belt-and-suspenders, and it fixes the narrower "we're the one who promoted a
+  stale popup" case even for windows that technically do have area but shouldn't
+  be activated). But the size check in CanAddToTaskbar is the one that actually
+  matches what you're seeing and would have prevented every instance in this
+  log.
+
+  Want me to add the CanAddToTaskbar size check (and optionally the
+  makeForeground guard too)?
+
+✻ Churned for 48s
+
+❯ sure and can you gate this check behind a setting in taskbar properties       
+  default to false                                                              
+
+  Searched for 5 patterns, read 4 files (ctrl+o to expand)
+
+● Update(src\ManagedShell.WindowsTasks\TasksService.cs)
+  ⎿  Added 8 lines
+      26  
+      27          public Func<ApplicationWindow, IList<ApplicationWindow>
+          , int> WindowInsertionIndexProvider { get; set; }
+      28  
+      29 +        // Off by default: some apps (observed with a Word add-
+         +in) briefly create and activate a                              
+      30 +        // genuine but 0x0-sized top-level window as a side eff
+         +ect of their own internal handling,                            
+      31 +        // which - like any other window that passes the other 
+         +CanAddToTaskbar checks - gets a real                           
+      32 +        // task button for the instant it exists. Host apps can
+         + opt into filtering these out via                              
+      33 +        // ApplicationWindow.CanAddToTaskbar; left off by defau
+         +lt since a window with no area is an                           
+      34 +        // edge case some legitimate (if unusual) windows could
+         + conceivably hit.                                              
+      35 +        public bool FilterZeroSizeWindows { get; set; }        
+      36 +                                                               
+      37          private NativeWindowEx _HookWin;
+      38          private object _windowsLock = new object();
+      39          internal bool IsInitialized;
+
+● Now update CanAddToTaskbar in ApplicationWindow.cs:
+
+● Update(src\ManagedShell.WindowsTasks\ApplicationWindow.cs)
+  ⎿  Added 8 lines, removed 1 line
+      363                  bool isDeleted = NativeMethods.GetProp(Handle,
+            "ITaskList_Deleted") != IntPtr.Zero;
+      364                  IntPtr ownerWin = NativeMethods.GetWindow(Hand
+           le, NativeMethods.GetWindow_Cmd.GW_OWNER);
+      365  
+      366 -                return isWindow && isVisible && (ownerWin == I
+          -ntPtr.Zero || isAppWindow) && (!isNoActivate || isAppWindow) &
+          -& !isToolWindow && !isDeleted;                                
+      366 +                bool hasArea = true;                          
+      367 +                if (isWindow && (_tasksService?.FilterZeroSize
+          +Windows ?? false))                                            
+      368 +                {                                             
+      369 +                    NativeMethods.GetWindowRect(Handle, out Na
+          +tiveMethods.Rect rect);                                       
+      370 +                    hasArea = rect.Right > rect.Left && rect.B
+          +ottom > rect.Top;                                             
+      371 +                }                                             
+      372 +                                                              
+      373 +                return isWindow && isVisible && hasArea && (ow
+          +nerWin == IntPtr.Zero || isAppWindow) && (!isNoActivate || isA
+          +ppWindow) && !isToolWindow && !isDeleted;                     
+      374              }
+      375          }
+      376  
+
+● Now the makeForeground() hardening (unconditional — this one's a correctness
+  fix for the modal-dialog handoff, not a display-filtering preference):
+
+● Update(src\ManagedShell.WindowsTasks\ApplicationWindow.cs)
+  ⎿  Added 14 lines
+      704          private void makeForeground()
+      705          {
+      706              IntPtr hWnd = NativeMethods.GetLastActivePopup(Han
+           dle);
+      707 +                                                              
+      708 +            // GetLastActivePopup normally exists to redirect 
+          +focus to an owned modal dialog instead                        
+      709 +            // of the window behind it - but it's just returni
+          +ng whatever Windows last recorded as                          
+      710 +            // the owner's active popup, with no guarantee tha
+          +t popup is still meaningful. An app can                       
+      711 +            // leave behind a stale, invisible, zero-size owne
+          +d window (observed with a Word add-in)                        
+      712 +            // that never should have been treated as a real p
+          +opup to begin with. Activating a                              
+      713 +            // degenerate popup like that makes it the genuine
+          + OS foreground window - which is enough                       
+      714 +            // for a shell hook to briefly show it as a task b
+          +utton - so fall back to the window we                         
+      715 +            // were actually asked to activate instead.       
+      716 +            if (hWnd != Handle && !IsGenuinePopup(hWnd))      
+      717 +            {                                                 
+      718 +                hWnd = Handle;                                
+      719 +            }                                                 
+      720 +                                                              
+      721              IntPtr foregroundHwnd = NativeMethods.GetForegroun
+           dWindow();
+      722              uint foregroundThreadId = NativeMethods.GetWindowT
+           hreadProcessId(foregroundHwnd, out _);
+      723              uint currentThreadId = NativeMethods.GetCurrentThr
+           eadId();
+
+● Now add the IsGenuinePopup helper right after makeForeground():
+
+  Read 1 file (ctrl+o to expand)
+● Update(src\ManagedShell.WindowsTasks\ApplicationWindow.cs)
+  ⎿  Added 12 lines
+      729                  NativeMethods.AttachThreadInput(foregroundThre
+           adId, currentThreadId, false);
+      730          }
+      731  
+      732 +        // Rejects popups that couldn't be a real, currently-u
+          +sable window: gone, hidden, or with no                        
+      733 +        // area. GetLastActivePopup falls back to returning hW
+          +nd itself when there's no popup, so this                      
+      734 +        // is only ever asked to validate a genuinely differen
+          +t, owned window.                                              
+      735 +        private static bool IsGenuinePopup(IntPtr hWnd)       
+      736 +        {                                                     
+      737 +            if (!NativeMethods.IsWindow(hWnd) || !NativeMethod
+          +s.IsWindowVisible(hWnd))                                      
+      738 +                return false;                                 
+      739 +                                                              
+      740 +            NativeMethods.GetWindowRect(hWnd, out NativeMethod
+          +s.Rect rect);                                                 
+      741 +            return rect.Right > rect.Left && rect.Bottom > rec
+          +t.Top;                                                        
+      742 +        }                                                     
+      743 +                                                              
+      744          internal IntPtr DoClose()
+      745          {
+      746              makeForeground();
+
+● Now the RetroBar-side setting:
+
+● Update(~\source\repos\remap_win_e\RetroBar\RetroBar\Utilities\Settings.cs)
+  ⎿  Added 7 lines
+      410              set => Set(ref _groupAfterParent, value);
+      411          }
+      412  
+      413 +        private bool _filterZeroSizeWindows = false;          
+      414 +        public bool FilterZeroSizeWindows                     
+      415 +        {                                                     
+      416 +            get => _filterZeroSizeWindows;                    
+      417 +            set => Set(ref _filterZeroSizeWindows, value);    
+      418 +        }                                                     
+      419 +                                                              
+      420          private bool _showClockSeconds = false;
+      421          public bool ShowClockSeconds
+      422          {
+
+● Wire it into App.xaml.cs:
+
+● Update(~\source\repos\remap_win_e\RetroBar\RetroBar\App.xaml.cs)
+  ⎿  Added 1 line
+      52                  if (!Settings.Instance.GroupAfterParent) return
+           -1;
+      53                  return ParentWindowHelper.FindInsertionIndex(wi
+          n, windows);
+      54              };
+      55 +            _shellManager.TasksService.FilterZeroSizeWindows = 
+         +Settings.Instance.FilterZeroSizeWindows;                       
+      56  
+      57              _explorerMonitor = new ExplorerMonitor();
+      58              _startMenuMonitor = new StartMenuMonitor(new AppVis
+          ibilityHelper(false));
+
+● Update(~\source\repos\remap_win_e\RetroBar\RetroBar\App.xaml.cs)
+  ⎿  Added 4 lines
+      110              {
+      111                  setTaskIconSize();
+      112              }
+      113 +            else if (e.PropertyName == nameof(Settings.FilterZ
+          +eroSizeWindows))                                              
+      114 +            {                                                 
+      115 +                _shellManager.TasksService.FilterZeroSizeWindo
+          +ws = Settings.Instance.FilterZeroSizeWindows;                 
+      116 +            }                                                 
+      117          }
+      118  
+      119          private void loadTheme()
+
+● Now the checkbox in PropertiesWindow.xaml, next to the other taskbar-behavior
+  checkboxes:
+
+● Update(~\source\repos\remap_win_e\RetroBar\RetroBar\PropertiesWindow.xaml)
+  ⎿  Added 3 lines
+      272                              <CheckBox IsChecked="{Binding Sour
+           ce={x:Static Settings:Settings.Instance}, Path=GroupAfterParen
+           t, UpdateSourceTrigger=PropertyChanged}">
+      273                                  <Label Content="{DynamicResour
+           ce group_after_parent}" />
+      274                              </CheckBox>
+      275 +                            <CheckBox IsChecked="{Binding Sour
+          +ce={x:Static Settings:Settings.Instance}, Path=FilterZeroSizeW
+          +indows, UpdateSourceTrigger=PropertyChanged}">                
+      276 +                                <Label Content="{DynamicResour
+          +ce filter_zero_size_windows}" />                              
+      277 +                            </CheckBox>                       
+      278                          </StackPanel>
+      279                      </GroupBox>
+      280                      <GroupBox Header="{DynamicResource notific
+           ation_area}">
+
+● Now the string resource:
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(~\source\repos\remap_win_e\RetroBar\RetroBar\Languages\English.xaml)
+  ⎿  Added 1 line
+      79      <s:String x:Key="slide_taskbar_buttons">Slid_e taskbar butt
+          ons</s:String>
+      80      <s:String x:Key="animate_taskbar_layout">Anima_te taskbar b
+          utton resizing and reordering</s:String>
+      81      <s:String x:Key="group_after_parent">_Insert new windows af
+          ter their parent in the task list</s:String>
+      82 +    <s:String x:Key="filter_zero_size_windows">Ignore invisible
+         +, zero-size windows in the task list</s:String>                
+      83      <s:String x:Key="show_clock_seconds">S_how seconds in the c
+          lock</s:String>
+      84      <s:String x:Key="open_custom_themes_folder">Open custom the
+          mes folder</s:String>
+      85      <s:String x:Key="win_num_hotkeys_action">Win+[0-9] _hotkeys
+           action:</s:String>
+
+● Let's build to make sure everything compiles:
+
+  Ran 3 shell commands (ctrl+o to expand)
+
+● Background command "Check for actual compile errors vs just file-lock copy
+warnings" failed with exit code 1
+
+● Task Output(non-blocking) b13h9wje8
+  ⎿  Error: No task found with ID: b13h9wje8
+
+  Searched for 2 patterns, read 1 file, ran 2 shell commands (ctrl+o to expand)
+
+● Build succeeds with 0 errors — the earlier failure was purely
+  scripts\build.ps1 trying to copy into the live bin\ folder while your running
+  RetroBar.exe (PID 23200) had those DLLs locked, not a compile problem. All the
+  warnings are pre-existing, unrelated to these changes.
+
+  Here's a summary of everything I changed:
+
+  ManagedShell/src/ManagedShell.WindowsTasks/TasksService.cs
+  - New FilterZeroSizeWindows property (default false).
+
+  ManagedShell/src/ManagedShell.WindowsTasks/ApplicationWindow.cs
+  - CanAddToTaskbar: when FilterZeroSizeWindows is on, rejects windows with a
+    0×0 rect.
+  - makeForeground(): rejects a GetLastActivePopup result that isn't a real,
+    visible, non-degenerate window and falls back to the window actually being
+    activated (unconditional — no setting).
+
+  RetroBar/Utilities/Settings.cs — new FilterZeroSizeWindows bool setting,
+  default false.
+
+  RetroBar/App.xaml.cs — wires Settings.Instance.FilterZeroSizeWindows into
+  TasksService.FilterZeroSizeWindows at startup and on change.
+
+  RetroBar/PropertiesWindow.xaml — new checkbox in the Taskbar group, next to
+  "Insert new windows after their parent."
+
+  RetroBar/Languages/English.xaml — label: "Ignore invisible, zero-size windows
+  in the task list."
+
+  To actually pick this up, you'll need to rebuild and restart RetroBar (your
+  running instance still has the old code loaded) — since it's your live taskbar
+  I didn't restart it for you. The new checkbox is off by default, so nothing
+  changes until you turn it on in Taskbar Properties.
+
+✻ Brewed for 13m 16s
+
+❯ why is managedshell source tree detached?                                     
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● It's detached for two separate reasons stacked on top of each other:
+
+  1. That's just how git submodules normally work. When the outer RetroBar repo
+  records a submodule, it pins ManagedShell to one exact commit SHA (a
+  "gitlink"), not a branch name. git submodule update checks out that SHA
+  directly, which is inherently a detached HEAD — there's no branch involved
+  unless you make one yourself. This part is expected and not a problem by
+  itself.
+
+  2. But in this repo, that detached commit has actually drifted away from any 
+  branch. Look at what git branch -v shows:
+
+  * (HEAD detached from 078f233)   7dee207 Add SweepDeadWindows
+    master                         078f233 [ahead 8, behind 8] Improve inactive
+  fullscreen app detection
+    remotes/mine/master            078f233 Improve inactive fullscreen app
+  detection
+
+  Your local master is in sync with mine/master (your fork on GitHub) at
+  078f233. But HEAD is sitting on 7dee207, which is 8 commits ahead and 8 
+  commits behind master — i.e. a genuinely separate line of history, not just
+  "master plus a few commits." git log master..HEAD shows those 8 commits:
+
+  7dee207 Add SweepDeadWindows
+  5b22e08 Fix opening context menu on task button causes collapsed task group...
+  d5d1c7b Fix restarting explorer break virtual desktop listening
+  27e5ef5 Try to fix tray icons not appearing
+  ... (4 more)
+
+  That means at some point, commits were made directly on a detached HEAD in
+  this submodule (this looks like it came out of earlier Claude Code sessions,
+  going by the commit-message style) without ever cutting a branch for them.
+  Each commit just kept advancing the detached HEAD, and the outer RetroBar
+  repo's .gitmodules/gitlink got updated to point at wherever that detached HEAD
+  ended up — which is why git submodule status shows 7dee207. Meanwhile master
+  never moved, so it's now a stale, diverged branch that doesn't actually
+  contain any of that work.
+
+  Why this is worth fixing, not just living with: those 8 commits aren't
+  reachable from any branch name right now. They only exist because the gitlink
+  in the outer repo happens to point at them and because they're still in HEAD's
+  history. If HEAD ever gets checked out to a different commit (another git 
+  submodule update, a different clone, git gc eventually) without a branch
+  anchoring 7dee207, those commits become much harder to find and are at real
+  risk of being pruned.
+
+  Want me to create a branch at the current commit (e.g. git checkout -b 
+  master-work or fast-forward master itself if you want it to just become the
+  new master) so this work isn't sitting unnamed?
+✻ Cogitated for 42s
+
+※ recap: Diagnosed the flashing-taskbar-button bug (fixed and setting added) and now explaining why ManagedShell's submodule is on a detached, unbranched commit. Next: create a branch there so those 8 commits aren't orphaned, if you want me to. (disable recaps in /config)

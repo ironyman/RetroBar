@@ -52,6 +52,7 @@ namespace RetroBar
                 if (!Settings.Instance.GroupAfterParent) return -1;
                 return ParentWindowHelper.FindInsertionIndex(win, windows);
             };
+            _shellManager.TasksService.FilterZeroSizeWindows = Settings.Instance.FilterZeroSizeWindows;
 
             _explorerMonitor = new ExplorerMonitor();
             _startMenuMonitor = new StartMenuMonitor(new AppVisibilityHelper(false));
@@ -108,6 +109,10 @@ namespace RetroBar
             else if (e.PropertyName == nameof(Settings.Theme) || e.PropertyName == nameof(Settings.TaskbarScale))
             {
                 setTaskIconSize();
+            }
+            else if (e.PropertyName == nameof(Settings.FilterZeroSizeWindows))
+            {
+                _shellManager.TasksService.FilterZeroSizeWindows = Settings.Instance.FilterZeroSizeWindows;
             }
         }
 

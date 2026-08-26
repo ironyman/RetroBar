@@ -410,6 +410,13 @@ namespace RetroBar.Utilities
             set => Set(ref _groupAfterParent, value);
         }
 
+        private bool _filterZeroSizeWindows = false;
+        public bool FilterZeroSizeWindows
+        {
+            get => _filterZeroSizeWindows;
+            set => Set(ref _filterZeroSizeWindows, value);
+        }
+
         private bool _showClockSeconds = false;
         public bool ShowClockSeconds
         {
