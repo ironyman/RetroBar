@@ -35,6 +35,22 @@ namespace RetroBar
 
         public App()
         {
+            // Check this before anything else so it's the first thing in the log if it's true.
+            // RetroBar must run at Medium integrity (see docs\missing-tray-icons.md and
+            // docs\shell-crash-recovery-failure.md) - running elevated doesn't crash or even
+            // visibly misbehave immediately, it just silently breaks UIPI-gated communication with
+            // the (Medium-integrity) shell, e.g. ExplorerMonitor never receiving explorer's
+            // "TaskbarCreated" broadcast after an explorer.exe restart, so the AppBar/work-area
+            // reservation never gets reasserted. That failure mode is easy to miss for days.
+            if (ElevationHelper.IsCurrentProcessElevated())
+            {
+                ShellLogger.Warning("App: RetroBar is running ELEVATED (Administrator). This is unsupported - " +
+                    "RetroBar must run at Medium integrity. Running elevated silently breaks UIPI-gated features " +
+                    "such as ExplorerMonitor's TaskbarCreated recovery (see docs\\shell-crash-recovery-failure.md) " +
+                    "and tray icon pre-population (see docs\\missing-tray-icons.md). Restart RetroBar from a " +
+                    "non-elevated shell/shortcut.");
+            }
+
             // Reserve Win+B before anything else initializes, so that if explorer.exe needs to be
             // killed and relaunched to free it, no Shell_TrayWnd (real or ManagedShell's fake one)
             // exists yet and the relaunched explorer.exe correctly takes over as the desktop shell.

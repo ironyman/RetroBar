@@ -1,5 +1,6 @@
 using System;
 using System.Runtime.InteropServices;
+using System.Security.Principal;
 using ManagedShell.Interop;
 
 namespace RetroBar.Utilities
@@ -9,6 +10,18 @@ namespace RetroBar.Utilities
     // Explorer use to show a process's elevation state without themselves running elevated.
     internal static class ElevationHelper
     {
+        // Checks our own process, not some other window's - no cross-process P/Invoke needed for this case,
+        // just the current thread's token. RetroBar must run at Medium integrity (see docs\missing-tray-icons.md
+        // and docs\shell-crash-recovery-failure.md): running elevated silently breaks UIPI-gated communication
+        // with the (Medium-integrity) shell, e.g. ExplorerMonitor never receiving explorer's "TaskbarCreated"
+        // broadcast after an explorer.exe restart, so the AppBar/work-area reservation never gets reasserted.
+        public static bool IsCurrentProcessElevated()
+        {
+            using WindowsIdentity identity = WindowsIdentity.GetCurrent();
+            var principal = new WindowsPrincipal(identity);
+            return principal.IsInRole(WindowsBuiltInRole.Administrator);
+        }
+
         private const uint TokenElevation = 20; // TOKEN_INFORMATION_CLASS.TokenElevation
 
         [StructLayout(LayoutKind.Sequential)]

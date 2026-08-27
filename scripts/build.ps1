@@ -99,6 +99,14 @@
 .PARAMETER Help
     Show this help message.
 
+.PARAMETER AllowElevated
+    Override the safety check that refuses to launch RetroBar.exe from an elevated
+    (Administrator) PowerShell session. RetroBar must run at Medium integrity - see
+    docs\missing-tray-icons.md and docs\shell-crash-recovery-failure.md. Launching it
+    elevated silently breaks UIPI-gated features (e.g. ExplorerMonitor never receiving
+    explorer's "TaskbarCreated" broadcast) with no immediate visible symptom. Only pass
+    this if you specifically need to test RetroBar's elevated-run behavior.
+
 .EXAMPLE
     .\build.ps1                                # build everything (foreground, no launch)
     .\build.ps1 -Target WindowsTasks           # rebuild just WindowsTasks
@@ -159,6 +167,7 @@ param(
     [switch]$SetupVsjit,
     [switch]$RemoveDebugger,
     [switch]$Help,
+    [switch]$AllowElevated,
 
     # Internal: passed by -Background to tell the spawned process to launch RetroBar after building.
     [switch]$Launch
@@ -241,12 +250,43 @@ function Find-RetroBarExe([string]$cfg, [string]$fw) {
     return $newest
 }
 
+function Test-CurrentProcessElevated {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
 function Start-RetroBar([string]$cfg, [string]$fw) {
     $exe = Find-RetroBarExe $cfg $fw
     if (-not $exe) {
         Write-Warning "RetroBar.exe not found in bin\x64\$cfg\$fw or bin\$cfg\$fw"
         return
     }
+
+    # RetroBar must run at Medium integrity (docs\missing-tray-icons.md,
+    # docs\shell-crash-recovery-failure.md). Start-Process below has no -Verb, so it
+    # inherits whatever integrity level THIS script is running at - if that's an elevated
+    # terminal (e.g. left open after -SetupDebugger/-RemoveDebugger, which do need Admin),
+    # RetroBar silently launches elevated with no error and no immediate visible symptom.
+    # That's exactly what caused a multi-day ExplorerMonitor/work-area failure - refuse by
+    # default instead of repeating it.
+    if ((Test-CurrentProcessElevated) -and -not $script:AllowElevated) {
+        Write-Error @"
+Refusing to launch RetroBar from an elevated (Administrator) PowerShell session.
+
+RetroBar must run at Medium integrity - see docs\missing-tray-icons.md and
+docs\shell-crash-recovery-failure.md. Launching it elevated silently breaks
+ExplorerMonitor's TaskbarCreated recovery (UIPI blocks the broadcast) and
+other explorer-integration features, often with no visible symptom until
+something like an explorer.exe crash exposes it days later.
+
+Close this elevated terminal and re-run this command from a normal
+(non-elevated) terminal instead. If you specifically need to test elevated
+behavior, pass -AllowElevated to override this check.
+"@
+        return
+    }
+
     Start-Process $exe
     Write-Host "RetroBar launched: $exe" -ForegroundColor Green
 }
@@ -836,6 +876,7 @@ if ($Background) {
         '-Launch'
     )
     if ($Log) { $scriptArgs += '-Log' }
+    if ($AllowElevated) { $scriptArgs += '-AllowElevated' }
     Start-Process powershell -ArgumentList $scriptArgs -WindowStyle Normal
     Write-Host "Background build started. Use .\build.ps1 -Stop to kill RetroBar and restore the taskbar." -ForegroundColor Cyan
     exit 0
