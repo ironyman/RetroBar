@@ -1,4 +1,4 @@
-using ManagedShell.AppBar;
+﻿using ManagedShell.AppBar;
 using ManagedShell.WindowsTasks;
 using ManagedShell.Common.Helpers;
 using ManagedShell.Common.Logging;
@@ -12,9 +12,11 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 
 namespace RetroBar.Controls
@@ -138,6 +140,8 @@ namespace RetroBar.Controls
                 Host.hotkeyManager.TaskbarHotkeyPressed += TaskList_TaskbarHotkeyPressed;
                 Host.hotkeyManager.CycleGroupWindowsHotkeyPressed += TaskList_CycleGroupWindowsHotkeyPressed;
                 WorkspaceManager.Instance.WorkspaceSwitched += WorkspaceManager_WorkspaceSwitched;
+                _windowRemovingSource = Tasks;
+                _windowRemovingSource.WindowRemoving += Tasks_WindowRemoving;
 
                 isLoaded = true;
             }
@@ -448,6 +452,12 @@ namespace RetroBar.Controls
             Settings.Instance.PropertyChanged -= Settings_PropertyChanged;
             WorkspaceManager.Instance.WorkspaceSwitched -= WorkspaceManager_WorkspaceSwitched;
 
+            if (_windowRemovingSource != null)
+            {
+                _windowRemovingSource.WindowRemoving -= Tasks_WindowRemoving;
+                _windowRemovingSource = null;
+            }
+
             isLoaded = false;
         }
 
@@ -608,6 +618,17 @@ namespace RetroBar.Controls
             // ObservableCollection.Move raises CollectionChanged with Action=Move and OldItems set,
             // but the window is not gone — only clean up groups for actual removals.
             HandleGroupedWindowsRemovalOrReset(e);
+
+            // A closed window's button was snapshotted just before removal (Tasks_WindowRemoving) -
+            // shrink that snapshot out of the gap it left while the remaining buttons grow.
+            var closing = _closingWindow;
+            _closingWindow = null;
+            if (closing != null && action == System.Collections.Specialized.NotifyCollectionChangedAction.Remove &&
+                e.OldItems != null && e.OldItems.Contains(closing))
+            {
+                AnimateClosedButtonOut(_closingIndex, _closingSnapshot, _closingSize);
+            }
+            _closingSnapshot = null;
         }
 
         // Relocates any newly added window that landed strictly inside an existing task group's
@@ -820,6 +841,8 @@ namespace RetroBar.Controls
         // smoother animated, whereas taskbar resizes should track the mouse instantly. The local
         // (unanimated) value is always the target, so anything reading ButtonWidth after the
         // animation stops sees the settled width.
+        private const double LayoutAnimationMs = 250;
+
         private void ApplyButtonWidth(double newWidth, bool animate)
         {
             double oldWidth = ButtonWidth; // reads the eased value if an animation is in flight
@@ -833,7 +856,7 @@ namespace RetroBar.Controls
             }
 
             ButtonWidth = newWidth;
-            var animation = new DoubleAnimation(oldWidth, newWidth, TimeSpan.FromMilliseconds(250))
+            var animation = new DoubleAnimation(oldWidth, newWidth, TimeSpan.FromMilliseconds(LayoutAnimationMs))
             {
                 EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut },
                 FillBehavior = FillBehavior.Stop
@@ -1147,6 +1170,176 @@ namespace RetroBar.Controls
                 });
             }
         }
+
+        #region Close animation
+
+        private Tasks _windowRemovingSource;
+        private ApplicationWindow _closingWindow;
+        private int _closingIndex;
+        private ImageSource _closingSnapshot;
+        private Size _closingSize;
+
+        // Closing a window removes it from the source synchronously, which tears its button's
+        // container down before GroupedWindows_CollectionChanged ever runs - too late to animate
+        // the button itself. So snapshot it here, just before removal, and let the Remove handler
+        // play that snapshot out. Only a single-row horizontal layout is handled: there the gap a
+        // closed button leaves is a simple horizontal span, whereas on a wrapping or vertical
+        // layout it could straddle rows.
+        private void Tasks_WindowRemoving(object sender, WindowEventArgs e)
+        {
+            _closingWindow = null;
+            _closingSnapshot = null;
+
+            if (!Settings.Instance.SlideTaskbarButtons || Host == null || Host.Orientation == Orientation.Vertical ||
+                Host.Rows != 1 || isScrollable || _isDragging || SwitchAnimationInProgress)
+                return;
+
+            if (TasksList.ItemContainerGenerator.ContainerFromItem(e.Window) is not ContentPresenter cp ||
+                cp.ActualWidth < 1 || cp.ActualHeight < 1)
+                return;
+
+            int index = TasksList.ItemContainerGenerator.IndexFromContainer(cp);
+            if (index < 0) return;
+
+            _closingIndex = index;
+            _closingSize = new Size(cp.ActualWidth, cp.ActualHeight);
+            _closingSnapshot = SnapshotElement(cp, _closingSize);
+            _closingWindow = e.Window;
+        }
+
+        private static ImageSource SnapshotElement(FrameworkElement element, Size size)
+        {
+            var dpi = VisualTreeHelper.GetDpi(element);
+            var bitmap = new RenderTargetBitmap(
+                (int)Math.Ceiling(size.Width * dpi.DpiScaleX), (int)Math.Ceiling(size.Height * dpi.DpiScaleY),
+                dpi.PixelsPerInchX, dpi.PixelsPerInchY, PixelFormats.Pbgra32);
+
+            // Drawn through a VisualBrush rather than rendering the element directly, so the
+            // element's offset within its parent doesn't shift it out of the bitmap.
+            var visual = new DrawingVisual();
+            using (var dc = visual.RenderOpen())
+            {
+                var brush = new VisualBrush(element)
+                {
+                    Viewbox = new Rect(size),
+                    ViewboxUnits = BrushMappingMode.Absolute,
+                    Stretch = Stretch.Fill
+                };
+                dc.DrawRectangle(brush, null, new Rect(size));
+            }
+
+            bitmap.Render(visual);
+            bitmap.Freeze();
+            return bitmap;
+        }
+
+        // Holds a gap open where the closed button was (as a left margin on the button that slid
+        // into its slot) and shrinks the gap, with the snapshot drawn in it, to nothing - over the
+        // same duration and easing as the shared width animation SetTaskButtonWidth just started,
+        // so the closing button shrinks away while the remaining buttons grow as one motion.
+        private void AnimateClosedButtonOut(int index, ImageSource snapshot, Size size)
+        {
+            if (snapshot == null) return;
+
+            var generator = TasksList.ItemContainerGenerator;
+            bool hasFollower = index < TasksList.Items.Count;
+            var follower = hasFollower ? generator.ContainerFromIndex(index) as ContentPresenter : null;
+
+            // The removal also refreshed the view (e.g. the window's group dissolved), so the
+            // containers are being regenerated and there's nothing stable to anchor the gap to.
+            if (hasFollower && follower == null) return;
+
+            var previous = index > 0 ? generator.ContainerFromIndex(index - 1) as ContentPresenter : null;
+            if (index > 0 && previous == null) return;
+
+            UIElement anchor = follower ?? previous ?? (UIElement)TasksList;
+            var layer = AdornerLayer.GetAdornerLayer(anchor);
+            if (layer == null) return;
+
+            var placement = follower != null ? ClosingButtonGhost.Placement.BeforeAnchor
+                : previous != null ? ClosingButtonGhost.Placement.AfterAnchor
+                : ClosingButtonGhost.Placement.AnchorStart;
+            var ghost = new ClosingButtonGhost(anchor, snapshot, size, placement);
+            layer.Add(ghost);
+
+            var duration = TimeSpan.FromMilliseconds(LayoutAnimationMs);
+            var ease = new SineEase { EasingMode = EasingMode.EaseInOut };
+
+            if (follower != null)
+            {
+                follower.BeginAnimation(MarginProperty, new ThicknessAnimation(new Thickness(size.Width, 0, 0, 0), new Thickness(0), duration)
+                {
+                    EasingFunction = ease,
+                    FillBehavior = FillBehavior.Stop
+                });
+            }
+
+            var gapAnimation = new DoubleAnimation(size.Width, 0, duration)
+            {
+                EasingFunction = ease,
+                FillBehavior = FillBehavior.HoldEnd
+            };
+            gapAnimation.Completed += (_, _) =>
+            {
+                if (VisualTreeHelper.GetParent(ghost) == layer)
+                    layer.Remove(ghost);
+            };
+            ghost.BeginAnimation(ClosingButtonGhost.GapProperty, gapAnimation);
+        }
+
+        // Draws a closed button's snapshot into the gap it left, clipped to the gap's current
+        // width so it appears to shrink away from its trailing edge.
+        private class ClosingButtonGhost : Adorner
+        {
+            public enum Placement
+            {
+                BeforeAnchor, // in the anchor's left margin - the anchor is the button after the gap
+                AfterAnchor,  // just past the anchor's right edge - the closed button was the last one
+                AnchorStart   // at the anchor's origin - the closed button was the only one
+            }
+
+            public static readonly DependencyProperty GapProperty = DependencyProperty.Register(
+                nameof(Gap), typeof(double), typeof(ClosingButtonGhost),
+                new FrameworkPropertyMetadata(0.0, FrameworkPropertyMetadataOptions.AffectsRender));
+
+            public double Gap
+            {
+                get { return (double)GetValue(GapProperty); }
+                set { SetValue(GapProperty, value); }
+            }
+
+            private readonly ImageSource _snapshot;
+            private readonly Size _size;
+            private readonly Placement _placement;
+
+            public ClosingButtonGhost(UIElement anchor, ImageSource snapshot, Size size, Placement placement) : base(anchor)
+            {
+                _snapshot = snapshot;
+                _size = size;
+                _placement = placement;
+                Gap = size.Width;
+                IsHitTestVisible = false;
+            }
+
+            protected override void OnRender(DrawingContext dc)
+            {
+                double gap = Gap;
+                if (gap <= 0) return;
+
+                double x = _placement switch
+                {
+                    Placement.BeforeAnchor => -gap,
+                    Placement.AfterAnchor => AdornedElement.RenderSize.Width,
+                    _ => 0
+                };
+
+                dc.PushClip(new RectangleGeometry(new Rect(x, 0, gap, _size.Height)));
+                dc.DrawImage(_snapshot, new Rect(new Point(x, 0), _size));
+                dc.Pop();
+            }
+        }
+
+        #endregion
 
         private void StartGroupHover(int targetIndex) => _groupManager.StartHover(targetIndex, OnGroupHoverConfirmed);
 

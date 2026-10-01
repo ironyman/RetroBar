@@ -389,7 +389,7 @@ namespace RetroBar.Utilities
             set => Set(ref _autoHideTransparent, value);
         }
 
-        private bool _slideTaskbarButtons = false;
+        private bool _slideTaskbarButtons = true;
         public bool SlideTaskbarButtons
         {
             get => _slideTaskbarButtons;
