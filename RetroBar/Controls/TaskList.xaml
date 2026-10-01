@@ -31,19 +31,19 @@
                           HorizontalAlignment="Stretch">
                 <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate>
-                        <WrapPanel Style="{DynamicResource TaskListWrapPanel}">
-                            <WrapPanel.Orientation>
+                        <local:TaskListPanel Style="{DynamicResource TaskListWrapPanel}"
+                                             ButtonWidth="{Binding Path=ButtonWidth, RelativeSource={RelativeSource FindAncestor, AncestorType=local:TaskList}}">
+                            <local:TaskListPanel.Orientation>
                                 <Binding Converter="{StaticResource orientationConverter}"
                                          Path="Orientation"
                                          RelativeSource="{RelativeSource Mode=FindAncestor, AncestorType=Window}" />
-                            </WrapPanel.Orientation>
-                        </WrapPanel>
+                            </local:TaskListPanel.Orientation>
+                        </local:TaskListPanel>
                     </ItemsPanelTemplate>
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                     <ItemContainerTemplate>
-                        <local:TaskButton Width="{Binding Path=ButtonWidth, RelativeSource={RelativeSource FindAncestor, AncestorType=local:TaskList}}"
-                                          Host="{Binding RelativeSource={RelativeSource FindAncestor, AncestorType=local:TaskList}}"></local:TaskButton>
+                        <local:TaskButton Host="{Binding RelativeSource={RelativeSource FindAncestor, AncestorType=local:TaskList}}"></local:TaskButton>
                     </ItemContainerTemplate>
                 </ItemsControl.ItemTemplate>
             </ItemsControl>

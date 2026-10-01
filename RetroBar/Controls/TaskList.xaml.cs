@@ -1233,8 +1233,8 @@ namespace RetroBar.Controls
             return bitmap;
         }
 
-        // Holds a gap open where the closed button was (as a left margin on the button that slid
-        // into its slot) and shrinks the gap, with the snapshot drawn in it, to nothing - over the
+        // Holds a gap open where the closed button was (as a TaskListPanel.LeadingGap on the
+        // button that slid into its slot) and shrinks the gap, with the snapshot drawn in it, to nothing - over the
         // same duration and easing as the shared width animation SetTaskButtonWidth just started,
         // so the closing button shrinks away while the remaining buttons grow as one motion.
         private void AnimateClosedButtonOut(int index, ImageSource snapshot, Size size)
@@ -1262,25 +1262,14 @@ namespace RetroBar.Controls
             var ghost = new ClosingButtonGhost(anchor, snapshot, size, placement);
             layer.Add(ghost);
 
-            var duration = TimeSpan.FromMilliseconds(LayoutAnimationMs);
-            var ease = new SineEase { EasingMode = EasingMode.EaseInOut };
-
-            if (follower != null)
+            var gapAnimation = new DoubleAnimation(size.Width, 0, TimeSpan.FromMilliseconds(LayoutAnimationMs))
             {
-                follower.BeginAnimation(MarginProperty, new ThicknessAnimation(new Thickness(size.Width, 0, 0, 0), new Thickness(0), duration)
-                {
-                    EasingFunction = ease,
-                    FillBehavior = FillBehavior.Stop
-                });
-            }
-
-            var gapAnimation = new DoubleAnimation(size.Width, 0, duration)
-            {
-                EasingFunction = ease,
+                EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut },
                 FillBehavior = FillBehavior.HoldEnd
             };
             gapAnimation.Completed += (_, _) =>
             {
+                ghost.ReleaseGap();
                 if (VisualTreeHelper.GetParent(ghost) == layer)
                     layer.Remove(ghost);
             };
@@ -1298,9 +1287,24 @@ namespace RetroBar.Controls
                 AnchorStart   // at the anchor's origin - the closed button was the only one
             }
 
+            // When the gap sits before the anchor, it's held open as the anchor's LeadingGap -
+            // driven from here so the layout and the drawn snapshot always agree on its width.
             public static readonly DependencyProperty GapProperty = DependencyProperty.Register(
                 nameof(Gap), typeof(double), typeof(ClosingButtonGhost),
-                new FrameworkPropertyMetadata(0.0, FrameworkPropertyMetadataOptions.AffectsRender));
+                new FrameworkPropertyMetadata(0.0, FrameworkPropertyMetadataOptions.AffectsRender, OnGapChanged));
+
+            private static void OnGapChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+            {
+                var ghost = (ClosingButtonGhost)d;
+                if (ghost._placement == Placement.BeforeAnchor)
+                    TaskListPanel.SetLeadingGap(ghost.AdornedElement, (double)e.NewValue);
+            }
+
+            public void ReleaseGap()
+            {
+                if (_placement == Placement.BeforeAnchor)
+                    AdornedElement.ClearValue(TaskListPanel.LeadingGapProperty);
+            }
 
             public double Gap
             {
@@ -1324,6 +1328,13 @@ namespace RetroBar.Controls
             protected override void OnRender(DrawingContext dc)
             {
                 double gap = Gap;
+                if (gap <= 0) return;
+
+                // TaskListPanel floors the anchor's edges to whole pixels, so the gap it actually
+                // leaves is whole pixels too - round to match rather than smearing the snapshot
+                // across a fractional offset.
+                var dpi = VisualTreeHelper.GetDpi(this);
+                gap = Math.Round(gap * dpi.DpiScaleX) / dpi.DpiScaleX;
                 if (gap <= 0) return;
 
                 double x = _placement switch

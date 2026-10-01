@@ -95,23 +95,90 @@ namespace RetroBar.Controls
             }
         }
 
-        private void Animate()
+        // The width TaskListPanel lays this button out at while it slides in or out; NaN (the
+        // default) means "use the TaskList's shared ButtonWidth". The panel sizes buttons itself
+        // rather than via Width so it can snap their edges to pixels as a whole row.
+        public static readonly DependencyProperty LayoutWidthProperty = DependencyProperty.Register(
+            nameof(LayoutWidth), typeof(double), typeof(TaskButton), new PropertyMetadata(double.NaN, OnLayoutWidthChanged));
+
+        public double LayoutWidth
+        {
+            get { return (double)GetValue(LayoutWidthProperty); }
+            set { SetValue(LayoutWidthProperty, value); }
+        }
+
+        private static void OnLayoutWidthChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+        {
+            // The button sits inside an item container, so the panel is further up than its parent.
+            for (DependencyObject p = VisualTreeHelper.GetParent(d); p != null; p = VisualTreeHelper.GetParent(p))
+            {
+                if (p is TaskListPanel panel)
+                {
+                    panel.InvalidateMeasure();
+                    return;
+                }
+            }
+        }
+
+        private void Animate(TaskList host)
         {
             var ease = new SineEase();
             ease.EasingMode = EasingMode.EaseInOut;
 
-            DoubleAnimation animation = new DoubleAnimation();
-            animation.From = 0;
-            animation.To = Host?.TargetButtonWidth ?? ActualWidth;
-            animation.Duration = new Duration(TimeSpan.FromMilliseconds(250));
+            DoubleAnimation animation = new DoubleAnimation(0, host.TargetButtonWidth, new Duration(TimeSpan.FromMilliseconds(250)));
             animation.FillBehavior = FillBehavior.Stop;
             animation.EasingFunction = ease;
             Storyboard.SetTarget(animation, this);
-            Storyboard.SetTargetProperty(animation, new PropertyPath(WidthProperty));
+            Storyboard.SetTargetProperty(animation, new PropertyPath(LayoutWidthProperty));
 
             Storyboard storyboard = new Storyboard();
             storyboard.Children.Add(animation);
             storyboard.Begin();
+        }
+
+        // Whether this button has decided whether to slide in since it was last attached.
+        private bool _slideInChecked;
+
+        // The slide-in has to start before the button's first render: Loaded only fires after
+        // that render, so starting it there showed the button at full width for a frame - and
+        // with no room left for it yet, pushed it onto a second row - before snapping it to
+        // width 0 to slide in. The Host binding hasn't resolved this early, so find the TaskList
+        // by walking up the tree.
+        protected override void OnVisualParentChanged(DependencyObject oldParent)
+        {
+            base.OnVisualParentChanged(oldParent);
+
+            _slideInChecked = false;
+            if (VisualParent == null) return;
+
+            for (DependencyObject d = VisualParent; d != null; d = VisualTreeHelper.GetParent(d))
+            {
+                if (d is TaskList host)
+                {
+                    StartSlideInIfNeeded(host);
+                    return;
+                }
+            }
+        }
+
+        private void StartSlideInIfNeeded(TaskList host)
+        {
+            _slideInChecked = true;
+
+            // A reveal caused by expanding/uncollapsing a group or removing a window from a
+            // collapsed group always slides in, regardless of the general new-window setting -
+            // but a width slide only reads correctly on a horizontal taskbar either way.
+            // (ConsumeRevealAnimation still runs even when suppressed, to clear the pending flag.)
+            bool forceSlideIn = host.ConsumeRevealAnimation(DataContext as ApplicationWindow) && Settings.Instance.AnimateTaskbarLayout;
+
+            // Buttons re-appearing as part of a workspace switch shouldn't slide in - that's just
+            // the workspace restoring, not the user opening a window.
+            bool suppressForSwitch = host.SwitchAnimationInProgress;
+
+            if (!suppressForSwitch && host.Host?.Orientation == Orientation.Horizontal && (forceSlideIn || Settings.Instance.SlideTaskbarButtons))
+            {
+                Animate(host);
+            }
         }
 
         private void TaskButton_OnLoaded(object sender, RoutedEventArgs e)
@@ -131,19 +198,11 @@ namespace RetroBar.Controls
                 Window.PropertyChanged += Window_PropertyChanged;
             }
 
-            // A reveal caused by expanding/uncollapsing a group or removing a window from a
-            // collapsed group always slides in, regardless of the general new-window setting -
-            // but a width slide only reads correctly on a horizontal taskbar either way.
-            // (ConsumeRevealAnimation still runs even when suppressed, to clear the pending flag.)
-            bool forceSlideIn = Host?.ConsumeRevealAnimation(Window) == true && Settings.Instance.AnimateTaskbarLayout;
-
-            // Buttons re-appearing as part of a workspace switch shouldn't slide in - that's just
-            // the workspace restoring, not the user opening a window.
-            bool suppressForSwitch = Host?.SwitchAnimationInProgress == true;
-
-            if (!suppressForSwitch && Host?.Host?.Orientation == Orientation.Horizontal && (forceSlideIn || Settings.Instance.SlideTaskbarButtons))
+            // Normally already decided in OnVisualParentChanged; this is a fallback for when the
+            // TaskList couldn't be found at that point.
+            if (!_slideInChecked && Host != null)
             {
-                Animate();
+                StartSlideInIfNeeded(Host);
             }
 
             Host?.RefreshGroupVisual(this);
@@ -158,11 +217,8 @@ namespace RetroBar.Controls
             IsHitTestVisible = false;
 
             var ease = new SineEase { EasingMode = EasingMode.EaseInOut };
-            DoubleAnimation animation = new DoubleAnimation
+            DoubleAnimation animation = new DoubleAnimation(ActualWidth, 0, new Duration(TimeSpan.FromMilliseconds(250)))
             {
-                From = ActualWidth,
-                To = 0,
-                Duration = new Duration(TimeSpan.FromMilliseconds(250)),
                 FillBehavior = FillBehavior.HoldEnd,
                 EasingFunction = ease
             };
@@ -173,7 +229,7 @@ namespace RetroBar.Controls
             }
 
             Storyboard.SetTarget(animation, this);
-            Storyboard.SetTargetProperty(animation, new PropertyPath(WidthProperty));
+            Storyboard.SetTargetProperty(animation, new PropertyPath(LayoutWidthProperty));
 
             Storyboard storyboard = new Storyboard();
             storyboard.Children.Add(animation);
