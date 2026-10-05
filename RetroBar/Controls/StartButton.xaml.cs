@@ -96,7 +96,7 @@ namespace RetroBar.Controls
             }
             else
             {
-                ShellHelper.ShowStartMenu();
+                StartMenuMonitor.ToggleStartMenu();
             }
         }
 

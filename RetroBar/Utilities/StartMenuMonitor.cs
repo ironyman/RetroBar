@@ -260,6 +260,69 @@ namespace RetroBar.Utilities
             return immersiveLauncher;
         }
 
+        /// <summary>
+        /// Toggles the Start menu. When Open Shell Menu is running, asks it directly via its
+        /// OpenShellMenu.StartMenuMsg message (the same thing "StartMenu.exe -toggle" does);
+        /// otherwise falls back to a synthesized Windows key press.
+        /// </summary>
+        /// <remarks>
+        /// The synthesized Windows key goes through SendInput, which UIPI silently drops whenever the
+        /// foreground window has a higher integrity level than RetroBar (e.g. an elevated terminal).
+        /// Since our window is WS_EX_NOACTIVATE, clicking Start doesn't change the foreground, so the
+        /// Start button would do nothing while an elevated app is focused. A posted message to
+        /// Explorer (same integrity as us) isn't subject to that.
+        /// </remarks>
+        public static void ToggleStartMenu()
+        {
+            if (tryToggleOpenShellMenu())
+            {
+                return;
+            }
+
+            ShellHelper.ShowStartMenu();
+        }
+
+        private static bool tryToggleOpenShellMenu()
+        {
+            if (FindWindowEx(IntPtr.Zero, IntPtr.Zero, "OpenShell.COwnerWindow", IntPtr.Zero) == IntPtr.Zero)
+            {
+                return false;
+            }
+
+            // Open Shell hooks Explorer's taskbar thread and listens for this message on Explorer's
+            // Shell_TrayWnd. Our own tray service also creates a Shell_TrayWnd, so match on the
+            // process that owns Progman rather than taking the first window FindWindow returns.
+            GetWindowThreadProcessId(FindWindowEx(IntPtr.Zero, IntPtr.Zero, "Progman", "Program Manager"), out uint procId);
+            IntPtr hTray = IntPtr.Zero;
+            while ((hTray = FindWindowEx(IntPtr.Zero, hTray, "Shell_TrayWnd", IntPtr.Zero)) != IntPtr.Zero)
+            {
+                GetWindowThreadProcessId(hTray, out uint trayProcId);
+                if (trayProcId == procId)
+                {
+                    break;
+                }
+            }
+
+            if (procId == 0 || hTray == IntPtr.Zero)
+            {
+                ShellLogger.Warning("StartMenuMonitor: Open Shell Menu is running but Explorer's Shell_TrayWnd was not found");
+                return false;
+            }
+
+            // Allow Explorer to take the foreground for the menu
+            AllowSetForegroundWindow(procId);
+
+            const int MSG_TOGGLE = 0; // TMenuMsgParam in Open Shell's StartMenuDLL.h
+            uint startMenuMsg = (uint)RegisterWindowMessage("OpenShellMenu.StartMenuMsg");
+            if (!PostMessage(hTray, startMenuMsg, (IntPtr)MSG_TOGGLE, IntPtr.Zero))
+            {
+                ShellLogger.Warning($"StartMenuMonitor: Failed to post toggle to Open Shell Menu: {Marshal.GetLastWin32Error()}");
+                return false;
+            }
+
+            return true;
+        }
+
         internal void ShowStartMenu(IntPtr taskbarHwnd)
         {
             _taskbarHwndActivated = taskbarHwnd;
@@ -269,8 +332,9 @@ namespace RetroBar.Utilities
                 FindWindowEx(IntPtr.Zero, IntPtr.Zero, "DV2ControlHost", IntPtr.Zero) != IntPtr.Zero)
             {
                 // Always use the Windows key when IImmersiveLauncher or IImmersiveMonitor is unavailable
-                // Also use the Windows key when Open Shell Menu or StartIsBack is running, because we cannot otherwise invoke it
-                ShellHelper.ShowStartMenu();
+                // Also use the Windows key when StartIsBack is running, because we cannot otherwise invoke it
+                // Open Shell Menu is invoked directly by ToggleStartMenu
+                ToggleStartMenu();
                 return;
             }
 

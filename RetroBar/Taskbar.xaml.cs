@@ -1002,7 +1002,7 @@ namespace RetroBar
         {
             if (_startMenuMonitor.IsCurrentlyVisible())
             {
-                ShellHelper.ShowStartMenu();
+                StartMenuMonitor.ToggleStartMenu();
             }
         }
 
