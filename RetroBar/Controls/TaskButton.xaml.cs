@@ -169,11 +169,16 @@ namespace RetroBar.Controls
             // collapsed group always slides in, regardless of the general new-window setting -
             // but a width slide only reads correctly on a horizontal taskbar either way.
             // (ConsumeRevealAnimation still runs even when suppressed, to clear the pending flag.)
-            bool forceSlideIn = host.ConsumeRevealAnimation(DataContext as ApplicationWindow) && Settings.Instance.AnimateTaskbarLayout;
+            var window = DataContext as ApplicationWindow;
+            bool forceSlideIn = host.ConsumeRevealAnimation(window) && Settings.Instance.AnimateTaskbarLayout;
+
+            // A button recreated only because the collection was refreshed was already on screen,
+            // so it shouldn't replay its slide-in.
+            bool recreatedByRefresh = host.ConsumeNoSlide(window) && !forceSlideIn;
 
             // Buttons re-appearing as part of a workspace switch shouldn't slide in - that's just
             // the workspace restoring, not the user opening a window.
-            bool suppressForSwitch = host.SwitchAnimationInProgress;
+            bool suppressForSwitch = host.SwitchAnimationInProgress || recreatedByRefresh;
 
             if (!suppressForSwitch && host.Host?.Orientation == Orientation.Horizontal && (forceSlideIn || Settings.Instance.SlideTaskbarButtons))
             {

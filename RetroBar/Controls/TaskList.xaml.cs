@@ -528,7 +528,7 @@ namespace RetroBar.Controls
             {
                 if (currentlyVisible) return; // already expanded - a same-group focus swap, not a reveal
                 MarkForReveal(others);
-                taskbarItems?.Refresh();
+                RefreshKeepingButtons();
             }
             else if (currentlyVisible)
             {
@@ -541,7 +541,7 @@ namespace RetroBar.Controls
                     // Start the remaining buttons growing into the post-collapse width right away
                     // so it plays alongside the slide-out instead of snapping in after it finishes.
                     SetTaskButtonWidth(animate: true, excludeCount: others.Count);
-                    AnimateHide(others, () => taskbarItems?.Refresh());
+                    AnimateHide(others, () => RefreshKeepingButtons());
                 }));
             }
         }
@@ -768,7 +768,7 @@ namespace RetroBar.Controls
             if (changed)
             {
                 _groupManager.UpdateGroupVisuals();
-                taskbarItems?.Refresh();
+                RefreshKeepingButtons();
             }
         }
 
@@ -919,6 +919,45 @@ namespace RetroBar.Controls
         public bool ConsumeRevealAnimation(ApplicationWindow window)
             => window != null && _pendingReveal.Remove(window);
 
+        // Windows whose button was already on screen before a Refresh. Refresh() regenerates every
+        // container, so each of those buttons gets attached again and would replay its slide-in -
+        // making the whole row animate when only one or two buttons actually changed (e.g. moving
+        // a button in/out of a group). Their re-attachment must not slide.
+        private readonly HashSet<ApplicationWindow> _pendingNoSlide = new HashSet<ApplicationWindow>();
+
+        // Called by TaskButton when it attaches, to check (and clear) whether this window's button
+        // is merely being recreated by a Refresh rather than newly appearing.
+        public bool ConsumeNoSlide(ApplicationWindow window)
+            => window != null && _pendingNoSlide.Remove(window);
+
+        // Refresh() for group changes: re-runs the filter, but buttons that were already visible
+        // don't re-slide in. Genuinely revealed windows (no container beforehand, and marked via
+        // MarkForReveal where a slide is wanted) still animate as before.
+        private void RefreshKeepingButtons()
+        {
+            if (taskbarItems == null) return;
+
+            bool any = false;
+            for (int i = 0; i < TasksList.Items.Count; i++)
+            {
+                if (TasksList.Items[i] is ApplicationWindow w &&
+                    TasksList.ItemContainerGenerator.ContainerFromIndex(i) != null)
+                {
+                    _pendingNoSlide.Add(w);
+                    any = true;
+                }
+            }
+
+            taskbarItems.Refresh();
+
+            // Containers are generated during layout, which runs before Loaded priority - anything
+            // still left over by then wasn't recreated, so clear it.
+            if (any)
+            {
+                Dispatcher.BeginInvoke(DispatcherPriority.Loaded, (Action)(() => _pendingNoSlide.Clear()));
+            }
+        }
+
         // The set of windows currently hidden because they're a non-representative member of a
         // collapsed group - mirrors the condition in Tasks_Filter. Used to detect windows that
         // transition from hidden to visible around a group operation, so those reveals can slide in.
@@ -980,7 +1019,7 @@ namespace RetroBar.Controls
             AnimateHide(newlyHidden, () =>
             {
                 MarkForReveal(revealed);
-                taskbarItems?.Refresh();
+                RefreshKeepingButtons();
                 AnimateLayoutChanges(positionsBefore);
             });
         }
@@ -1048,7 +1087,7 @@ namespace RetroBar.Controls
         public void RemoveGroup(ApplicationWindow window)
         {
             _groupManager.RemoveGroup(window);
-            taskbarItems?.Refresh();
+            RefreshKeepingButtons();
         }
 
         // Returns the windows belonging to the same group as the given window.
@@ -1077,7 +1116,7 @@ namespace RetroBar.Controls
             AnimateGroupsCollapsing(new List<TaskGroup> { group }, () =>
             {
                 _groupManager.CollapseGroup(window);
-                taskbarItems?.Refresh();
+                RefreshKeepingButtons();
             });
         }
 
@@ -1090,7 +1129,7 @@ namespace RetroBar.Controls
             AnimateGroupsCollapsing(groups, () =>
             {
                 _groupManager.CollapseAllGroups();
-                taskbarItems?.Refresh();
+                RefreshKeepingButtons();
             });
         }
 
@@ -1100,7 +1139,7 @@ namespace RetroBar.Controls
             var hiddenBefore = GetHiddenGroupMembers();
             _groupManager.UncollapseAllGroups();
             MarkForReveal(hiddenBefore);
-            taskbarItems?.Refresh();
+            RefreshKeepingButtons();
         }
 
         // Slides out the soon-to-be-hidden members of the given (not-yet-collapsed) groups, then
@@ -2164,7 +2203,7 @@ namespace RetroBar.Controls
                 && ReferenceEquals(_groupManager.GetGroupForWindow(soloWindow), _dragSoloOriginalGroup))
             {
                 _groupManager.ResolveSoloGroupDrag(soloWindow, _dragSoloOriginalGroup, _dragSoloInGroup);
-                taskbarItems?.Refresh();
+                RefreshKeepingButtons();
             }
         }
 
@@ -2218,7 +2257,7 @@ namespace RetroBar.Controls
             Dispatcher.BeginInvoke(DispatcherPriority.Loaded, (Action)(() =>
             {
                 if (committedMerge)
-                    taskbarItems?.Refresh();
+                    RefreshKeepingButtons();
                 _groupManager.ApplyGroupVisuals();
             }));
         }
