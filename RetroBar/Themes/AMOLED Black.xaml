@@ -45,7 +45,7 @@
     <SolidColorBrush x:Key="TaskButtonOuterBorder" Color="Transparent" />
     <SolidColorBrush x:Key="TaskButtonInnerHorizontalBorder" Color="Transparent" />
     <SolidColorBrush x:Key="TaskButtonInnerVerticalBorder" Color="Transparent" />
-    <SolidColorBrush x:Key="TaskButtonBackground" Color="Transparent" />
+    <SolidColorBrush x:Key="TaskButtonBackground" Color="#000000" />
     <SolidColorBrush x:Key="TaskButtonBottomBackground" Color="Transparent" />
 
     <!-- Match active border so hovering an active button doesn't flicker the accent border away -->
@@ -427,7 +427,8 @@
             <Setter.Value>
                 <ControlTemplate TargetType="Button">
                     <Grid x:Name="ButtonRoot">
-                        <Border Background="Transparent"
+                        <!-- Opaque so buttons overlapping during drag-reorder don't show through each other -->
+                        <Border Background="{DynamicResource TaskButtonBackground}"
                                 Margin="0,0,0,-2"
                                 x:Name="ButtonBackground" />
                         <ContentPresenter Margin="4,3"
